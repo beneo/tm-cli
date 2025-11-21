@@ -12,6 +12,8 @@ import {
   AuthType,
   qwenOAuth2Events,
   QwenOAuth2Event,
+  dingtalkOAuth2Events,
+  DingtalkOAuth2Event,
 } from '@qwen-code/qwen-code-core';
 
 // Mock the qwenOAuth2Events
@@ -22,17 +24,30 @@ vi.mock('@qwen-code/qwen-code-core', async () => {
     off: vi.fn().mockReturnThis(),
     emit: vi.fn().mockReturnThis(),
   };
+  const mockDtEmitter = {
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+    emit: vi.fn().mockReturnThis(),
+  };
   return {
     ...actual,
     qwenOAuth2Events: mockEmitter,
     QwenOAuth2Event: {
       AuthUri: 'authUri',
       AuthProgress: 'authProgress',
+      AuthCancel: 'authCancel',
+    },
+    dingtalkOAuth2Events: mockDtEmitter,
+    DingtalkOAuth2Event: {
+      AuthUri: 'dtAuthUri',
+      AuthProgress: 'dtAuthProgress',
+      AuthCancel: 'dtAuthCancel',
     },
   };
 });
 
 const mockQwenOAuth2Events = vi.mocked(qwenOAuth2Events);
+const mockDingtalkEvents = vi.mocked(dingtalkOAuth2Events);
 
 describe('useQwenAuth', () => {
   const mockDeviceAuth: DeviceAuthorizationData = {
@@ -86,6 +101,19 @@ describe('useQwenAuth', () => {
     );
     expect(mockQwenOAuth2Events.on).toHaveBeenCalledWith(
       QwenOAuth2Event.AuthProgress,
+      expect.any(Function),
+    );
+  });
+
+  it('should set up event listeners when Dingtalk auth and authenticating', () => {
+    renderHook(() => useQwenAuth(AuthType.DINGTALK_OAUTH, true));
+
+    expect(mockDingtalkEvents.on).toHaveBeenCalledWith(
+      DingtalkOAuth2Event.AuthUri,
+      expect.any(Function),
+    );
+    expect(mockDingtalkEvents.on).toHaveBeenCalledWith(
+      DingtalkOAuth2Event.AuthProgress,
       expect.any(Function),
     );
   });

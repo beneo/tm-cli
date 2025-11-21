@@ -26,5 +26,10 @@ export function validateAuthMethod(authMethod: string): string | null {
     return null;
   }
 
+  if (authMethod === AuthType.DINGTALK_OAUTH) {
+    // Dingtalk OAuth device flow handles credentials; no env vars required
+    return null;
+  }
+
   return 'Invalid auth method selected.';
 }

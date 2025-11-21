@@ -338,6 +338,300 @@ Settings are organized into categories. All settings should be placed within the
   - **Description:** Whether to use an external authentication flow.
   - **Default:** `undefined`
 
+### OAuth 凭证配置文件
+
+当使用 Qwen OAuth 认证时，凭证文件自动存储在用户的 home 目录下。这些文件对 OAuth 认证的正常运行至关重要。
+
+#### 文件结构
+
+```
+~/.qwen/
+├── oauth_creds.json      # OAuth 访问令牌和刷新令牌
+├── oauth_creds.lock      # 文件锁（用于多进程同步）
+└── settings.json         # 用户设置（包括认证配置）
+```
+
+#### `oauth_creds.json` 详细说明
+
+**文件路径：** `~/.qwen/oauth_creds.json`
+
+**文件权限：** `0o600`（`-rw-------`，仅所有者可读写）
+
+**目录权限：** `~/.qwen/` 目录权限为 `0o700`（`drwx------`，仅所有者可访问）
+
+**文件格式：**
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "expiry_date": 1234567890000,
+  "resource_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+}
+```
+
+**字段说明：**
+
+- **`access_token`** (string, 必需)
+  - OAuth 访问令牌，用于 API 认证
+  - 格式：JWT（JSON Web Token）
+  - 有效期：通常 1 小时
+  - 用途：作为 `Authorization: Bearer {token}` 头发送到 API
+
+- **`refresh_token`** (string, 必需)
+  - OAuth 刷新令牌，用于获取新的 access token
+  - 有效期：通常 30 天
+  - 用途：当 access token 过期时自动刷新
+
+- **`token_type`** (string, 必需)
+  - 令牌类型，固定为 `"Bearer"`
+  - 用途：指示如何在 HTTP 头中使用令牌
+
+- **`expiry_date`** (number, 必需)
+  - access token 的过期时间
+  - 格式：Unix 时间戳（毫秒）
+  - 计算：`Date.now() + expires_in * 1000`
+  - 示例：`1234567890000` 表示 2009-02-13 23:31:30 UTC
+
+- **`resource_url`** (string, 可选)
+  - DashScope API 的端点 URL
+  - 默认值：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+  - 用途：动态端点切换，支持不同的服务区域
+
+#### `oauth_creds.lock` 文件
+
+**文件路径：** `~/.qwen/oauth_creds.lock`
+
+**用途：** 防止多个进程同时刷新 token（文件锁机制）
+
+**锁文件格式：**
+
+```json
+{
+  "lockId": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": 1234567890000
+}
+```
+
+**锁定机制：**
+
+- **锁超时：** 10 秒
+- **陈旧锁清理：** 自动删除 10 秒前的锁
+- **锁 ID：** 使用 UUID（非 PID），更安全
+- **用途：** 确保在多个 CLI 实例运行时，只有一个进程执行 token 刷新
+
+#### 文件生命周期管理
+
+**自动创建：**
+
+- 首次 OAuth 认证成功后自动创建
+- 目录和文件权限自动设置为安全值
+
+**自动更新：**
+
+- access token 过期前 30 秒自动刷新
+- 刷新成功后更新 `oauth_creds.json`
+- 使用原子写入（先写临时文件，再重命名）确保数据完整性
+
+**自动删除：**
+
+- 当 refresh token 刷新失败（400 错误）时
+- 用户需要重新进行 OAuth 认证
+
+**跨进程同步：**
+
+- 每 5 秒检查文件修改时间
+- 如果文件被其他进程更新，自动重新加载
+- 通过文件锁防止并发写入
+
+#### 安全考虑
+
+1. **文件权限：**
+
+   ```bash
+   # 检查文件权限
+   ls -la ~/.qwen/oauth_creds.json
+   # 应显示：-rw------- (600)
+
+   ls -lad ~/.qwen/
+   # 应显示：drwx------ (700)
+   ```
+
+2. **权限问题修复：**
+
+   ```bash
+   # 修复目录权限
+   chmod 700 ~/.qwen
+
+   # 修复文件权限
+   chmod 600 ~/.qwen/oauth_creds.json
+   ```
+
+3. **多用户系统：**
+   - 每个用户有独立的 `~/.qwen/` 目录
+   - Token 不会在用户间共享
+   - 确保没有其他用户可读取文件
+
+4. **备份和恢复：**
+   - **不建议**备份 `oauth_creds.json`
+   - Token 有时效性，备份后可能已过期
+   - 如需在多台机器上使用，建议在每台机器上独立认证
+
+5. **共享文件系统警告：**
+   - NFS、SMB 等网络文件系统上的文件锁可能不可靠
+   - 建议避免在网络文件系统上存储凭证
+   - 如果必须使用，可能会遇到锁冲突
+
+#### 手动管理凭证
+
+**查看凭证信息：**
+
+```bash
+# 查看完整凭证（包含敏感信息，注意安全）
+cat ~/.qwen/oauth_creds.json
+
+# 仅查看过期时间
+cat ~/.qwen/oauth_creds.json | jq '.expiry_date'
+
+# 转换为人类可读的日期
+date -r $(cat ~/.qwen/oauth_creds.json | jq -r '.expiry_date / 1000')
+```
+
+**清除凭证：**
+
+```bash
+# 删除凭证文件（下次启动时需要重新认证）
+rm ~/.qwen/oauth_creds.json
+
+# 同时删除锁文件
+rm ~/.qwen/oauth_creds.lock
+```
+
+**重置 OAuth 认证：**
+
+```bash
+# 1. 清除旧凭证
+rm -f ~/.qwen/oauth_creds.json ~/.qwen/oauth_creds.lock
+
+# 2. 启动 qwen 并选择 Qwen OAuth
+qwen
+
+# 3. 或使用 /auth 命令
+qwen
+# 在 CLI 中输入: /auth
+```
+
+#### 故障排除
+
+**问题 1：权限被拒绝**
+
+```bash
+# 错误信息：
+# Error: EACCES: permission denied, open '~/.qwen/oauth_creds.json'
+
+# 解决方案：
+chmod 700 ~/.qwen
+chmod 600 ~/.qwen/oauth_creds.json
+
+# 如果文件被其他用户创建，可能需要重新创建：
+rm -f ~/.qwen/oauth_creds.json
+qwen  # 重新认证
+```
+
+**问题 2：文件损坏**
+
+```bash
+# 错误信息：
+# SyntaxError: Unexpected token in JSON at position ...
+
+# 解决方案：
+# 删除损坏的文件并重新认证
+rm ~/.qwen/oauth_creds.json
+qwen
+```
+
+**问题 3：锁文件冲突**
+
+```bash
+# 错误信息：
+# Failed to acquire lock
+# Timeout waiting for lock file
+
+# 解决方案：
+# 等待 10 秒（锁会自动超时）或手动删除陈旧锁
+rm ~/.qwen/oauth_creds.lock
+
+# 检查是否有僵尸进程
+ps aux | grep qwen
+```
+
+**问题 4：Token 自动刷新失败**
+
+```bash
+# 错误信息：
+# Failed to refresh access token
+# Please re-authenticate
+
+# 原因：refresh token 已过期（通常 30 天）
+# 解决方案：重新认证
+rm ~/.qwen/oauth_creds.json
+qwen
+```
+
+#### 相关设置
+
+OAuth 认证相关的设置项（在 `settings.json` 中）：
+
+```json
+{
+  "security": {
+    "auth": {
+      "selectedType": "QWEN_OAUTH",
+      "enforcedType": null,
+      "useExternal": false
+    }
+  }
+}
+```
+
+**设置说明：**
+
+- **`selectedType`:**
+  - 当前选择的认证类型
+  - 值：`"QWEN_OAUTH"` 或 `"OPENAI_API"`
+  - 由 `/auth` 命令自动设置
+
+- **`enforcedType`:**
+  - 企业环境中强制的认证类型
+  - 设置后用户无法切换到其他认证方式
+  - 默认：`null`（用户可自由选择）
+
+- **`useExternal`:**
+  - 是否使用外部认证流程
+  - 默认：`false`
+
+#### 调试和日志
+
+启用 OAuth 调试日志：
+
+```bash
+# 方法 1：环境变量
+export DEBUG=qwen:oauth
+qwen
+
+# 方法 2：在 .qwen/.env 中添加
+echo "DEBUG=qwen:oauth" >> ~/.qwen/.env
+qwen
+```
+
+调试输出包含：
+
+- Token 加载和验证过程
+- Token 刷新时机和结果
+- 文件锁获取和释放
+- API 请求（token 部分隐藏）
+
 #### `advanced`
 
 - **`advanced.autoConfigureMemory`** (boolean):

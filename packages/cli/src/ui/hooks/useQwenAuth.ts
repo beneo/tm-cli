@@ -10,10 +10,15 @@ import {
   qwenOAuth2Events,
   QwenOAuth2Event,
   type DeviceAuthorizationData,
-} from '@qwen-code/qwen-code-core';
+
+  dingtalkOAuth2Events,
+  DingtalkOAuth2Event,
+  type DeviceAuthorizationData as DingtalkDeviceAuthorizationData} from '@qwen-code/qwen-code-core';
 
 export interface QwenAuthState {
-  deviceAuth: DeviceAuthorizationData | null;
+  deviceAuth:
+    | (DeviceAuthorizationData | DingtalkDeviceAuthorizationData)
+    | null;
   authStatus:
     | 'idle'
     | 'polling'
@@ -34,11 +39,22 @@ export const useQwenAuth = (
     authMessage: null,
   });
 
-  const isQwenAuth = pendingAuthType === AuthType.QWEN_OAUTH;
+  const isDeviceAuth =
+    pendingAuthType === AuthType.QWEN_OAUTH ||
+    pendingAuthType === AuthType.DINGTALK_OAUTH;
+
+  const emitter =
+    pendingAuthType === AuthType.DINGTALK_OAUTH
+      ? dingtalkOAuth2Events
+      : qwenOAuth2Events;
+  const eventEnum =
+    pendingAuthType === AuthType.DINGTALK_OAUTH
+      ? DingtalkOAuth2Event
+      : QwenOAuth2Event;
 
   // Set up event listeners when authentication starts
   useEffect(() => {
-    if (!isQwenAuth || !isAuthenticating) {
+    if (!isDeviceAuth || !isAuthenticating) {
       // Reset state when not authenticating or not Qwen auth
       setQwenAuthState({
         deviceAuth: null,
@@ -80,26 +96,25 @@ export const useQwenAuth = (
     };
 
     // Add event listeners
-    qwenOAuth2Events.on(QwenOAuth2Event.AuthUri, handleDeviceAuth);
-    qwenOAuth2Events.on(QwenOAuth2Event.AuthProgress, handleAuthProgress);
+    emitter.on(eventEnum.AuthUri, handleDeviceAuth);
+    emitter.on(eventEnum.AuthProgress, handleAuthProgress);
 
     // Cleanup event listeners when component unmounts or auth finishes
     return () => {
-      qwenOAuth2Events.off(QwenOAuth2Event.AuthUri, handleDeviceAuth);
-      qwenOAuth2Events.off(QwenOAuth2Event.AuthProgress, handleAuthProgress);
+      emitter.off(eventEnum.AuthUri, handleDeviceAuth);
+      emitter.off(eventEnum.AuthProgress, handleAuthProgress);
     };
-  }, [isQwenAuth, isAuthenticating]);
+  }, [isDeviceAuth, isAuthenticating, emitter, eventEnum]);
 
   const cancelQwenAuth = useCallback(() => {
-    // Emit cancel event to stop polling
-    qwenOAuth2Events.emit(QwenOAuth2Event.AuthCancel);
+    emitter.emit(eventEnum.AuthCancel);
 
     setQwenAuthState({
       deviceAuth: null,
       authStatus: 'idle',
       authMessage: null,
     });
-  }, []);
+  }, [emitter, eventEnum]);
 
   return {
     qwenAuthState,

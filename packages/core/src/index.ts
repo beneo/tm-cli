@@ -27,6 +27,18 @@ export * from './fallback/types.js';
 export * from './code_assist/codeAssist.js';
 export * from './code_assist/oauth2.js';
 export * from './qwen/qwenOAuth2.js';
+// Export DingTalk specific exports to avoid naming conflicts with Qwen
+export type {
+  DingtalkCredentials,
+  IDingtalkOAuth2Client,
+} from './dingtalk/dingtalkOAuth2.js';
+export {
+  DingtalkOAuth2Client,
+  dingtalkOAuth2Events,
+  DingtalkOAuth2Event,
+  getDingtalkOAuthClient,
+} from './dingtalk/dingtalkOAuth2.js';
+export { DingtalkContentGenerator } from './dingtalk/dingtalkContentGenerator.js';
 export * from './code_assist/server.js';
 export * from './code_assist/types.js';
 

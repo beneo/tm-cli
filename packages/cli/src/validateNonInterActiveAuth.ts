@@ -20,6 +20,9 @@ function getAuthTypeFromEnv(): AuthType | undefined {
   if (process.env['QWEN_OAUTH']) {
     return AuthType.QWEN_OAUTH;
   }
+  if (process.env['DINGTALK_OAUTH']) {
+    return AuthType.DINGTALK_OAUTH;
+  }
 
   return undefined;
 }
@@ -44,7 +47,7 @@ export async function validateNonInteractiveAuth(
       enforcedType || getAuthTypeFromEnv() || configuredAuthType;
 
     if (!effectiveAuthType) {
-      const message = `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: QWEN_OAUTH, OPENAI_API_KEY`;
+      const message = `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: QWEN_OAUTH, DINGTALK_OAUTH, OPENAI_API_KEY`;
       throw new Error(message);
     }
 

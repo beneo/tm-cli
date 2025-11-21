@@ -195,7 +195,11 @@ export const useAuthCommand = (
   }, []);
 
   const cancelAuthentication = useCallback(() => {
-    if (isAuthenticating && pendingAuthType === AuthType.QWEN_OAUTH) {
+    if (
+      isAuthenticating &&
+      (pendingAuthType === AuthType.QWEN_OAUTH ||
+        pendingAuthType === AuthType.DINGTALK_OAUTH)
+    ) {
       cancelQwenAuth();
     }
 
@@ -225,16 +229,22 @@ export const useAuthCommand = (
     const defaultAuthType = process.env['QWEN_DEFAULT_AUTH_TYPE'];
     if (
       defaultAuthType &&
-      ![AuthType.QWEN_OAUTH, AuthType.USE_OPENAI].includes(
-        defaultAuthType as AuthType,
-      )
+      ![
+        AuthType.QWEN_OAUTH,
+        AuthType.USE_OPENAI,
+        AuthType.DINGTALK_OAUTH,
+      ].includes(defaultAuthType as AuthType)
     ) {
       onAuthError(
         t(
           'Invalid QWEN_DEFAULT_AUTH_TYPE value: "{{value}}". Valid values are: {{validValues}}',
           {
             value: defaultAuthType,
-            validValues: [AuthType.QWEN_OAUTH, AuthType.USE_OPENAI].join(', '),
+            validValues: [
+              AuthType.QWEN_OAUTH,
+              AuthType.DINGTALK_OAUTH,
+              AuthType.USE_OPENAI,
+            ].join(', '),
           },
         ),
       );

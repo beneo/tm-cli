@@ -258,8 +258,29 @@ export const DialogManager = ({
           deviceAuth={uiState.qwenAuthState.deviceAuth || undefined}
           authStatus={uiState.qwenAuthState.authStatus}
           authMessage={uiState.qwenAuthState.authMessage}
+          providerLabel="Qwen OAuth"
           onTimeout={() => {
             uiActions.onAuthError('Qwen OAuth authentication timed out.');
+            uiActions.cancelAuthentication();
+            uiActions.setAuthState(AuthState.Updating);
+          }}
+          onCancel={() => {
+            uiActions.cancelAuthentication();
+            uiActions.setAuthState(AuthState.Updating);
+          }}
+        />
+      );
+    }
+
+    if (uiState.pendingAuthType === AuthType.DINGTALK_OAUTH) {
+      return (
+        <QwenOAuthProgress
+          deviceAuth={uiState.qwenAuthState.deviceAuth || undefined}
+          authStatus={uiState.qwenAuthState.authStatus}
+          authMessage={uiState.qwenAuthState.authMessage}
+          providerLabel="DingTalk OAuth"
+          onTimeout={() => {
+            uiActions.onAuthError('DingTalk OAuth authentication timed out.');
             uiActions.cancelAuthentication();
             uiActions.setAuthState(AuthState.Updating);
           }}

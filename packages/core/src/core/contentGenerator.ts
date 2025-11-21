@@ -49,6 +49,7 @@ export enum AuthType {
   CLOUD_SHELL = 'cloud-shell',
   USE_OPENAI = 'openai',
   QWEN_OAUTH = 'qwen-oauth',
+  DINGTALK_OAUTH = 'dingtalk-oauth',
 }
 
 export type ContentGeneratorConfig = {
@@ -96,6 +97,16 @@ export function createContentGeneratorConfig(
       ...newContentGeneratorConfig,
       model: DEFAULT_QWEN_MODEL,
       apiKey: 'QWEN_OAUTH_DYNAMIC_TOKEN',
+    } as ContentGeneratorConfig;
+  }
+
+  if (authType === AuthType.DINGTALK_OAUTH) {
+    const DEFAULT_DINGTALK_BASE_URL = 'http://localhost:8080/v1';
+    return {
+      ...newContentGeneratorConfig,
+      model: DEFAULT_QWEN_MODEL,
+      apiKey: 'DINGTALK_OAUTH_DYNAMIC_TOKEN',
+      baseUrl: newContentGeneratorConfig?.baseUrl || DEFAULT_DINGTALK_BASE_URL,
     } as ContentGeneratorConfig;
   }
 
@@ -200,6 +211,27 @@ export async function createContentGenerator(
 
       // Create the content generator with dynamic token management
       return new QwenContentGenerator(qwenClient, config, gcConfig);
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  if (config.authType === AuthType.DINGTALK_OAUTH) {
+    const { getDingtalkOAuthClient } = await import(
+      '../dingtalk/dingtalkOAuth2.js'
+    );
+    const { DingtalkContentGenerator } = await import(
+      '../dingtalk/dingtalkContentGenerator.js'
+    );
+
+    try {
+      const dingtalkClient = await getDingtalkOAuthClient(
+        gcConfig,
+        isInitialAuth ? { requireCachedCredentials: true } : undefined,
+      );
+      return new DingtalkContentGenerator(dingtalkClient, config, gcConfig);
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}`,

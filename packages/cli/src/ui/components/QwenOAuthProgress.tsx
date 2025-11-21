@@ -19,6 +19,7 @@ interface QwenOAuthProgressProps {
   onTimeout: () => void;
   onCancel: () => void;
   deviceAuth?: DeviceAuthorizationData;
+  providerLabel?: string;
   authStatus?:
     | 'idle'
     | 'polling'
@@ -36,9 +37,11 @@ interface QwenOAuthProgressProps {
 function QrCodeDisplay({
   verificationUrl,
   qrCodeData,
+  providerLabel,
 }: {
   verificationUrl: string;
   qrCodeData: string | null;
+  providerLabel: string;
 }): React.JSX.Element | null {
   if (!qrCodeData) {
     return null;
@@ -53,7 +56,7 @@ function QrCodeDisplay({
       width="100%"
     >
       <Text bold color={Colors.AccentBlue}>
-        {t('Qwen OAuth Authentication')}
+        {t('{{provider}} Authentication', { provider: providerLabel })}
       </Text>
 
       <Box marginTop={1}>
@@ -125,6 +128,7 @@ export function QwenOAuthProgress({
   onTimeout,
   onCancel,
   deviceAuth,
+  providerLabel = 'Qwen OAuth',
   authStatus,
   authMessage,
 }: QwenOAuthProgressProps): React.JSX.Element {
@@ -204,9 +208,10 @@ export function QwenOAuthProgress({
       <QrCodeDisplay
         verificationUrl={deviceAuth.verification_uri_complete}
         qrCodeData={qrCodeData}
+        providerLabel={providerLabel}
       />
     );
-  }, [deviceAuth?.verification_uri_complete, qrCodeData]);
+  }, [deviceAuth?.verification_uri_complete, qrCodeData, providerLabel]);
 
   // Handle timeout state
   if (authStatus === 'timeout') {
@@ -219,7 +224,9 @@ export function QwenOAuthProgress({
         width="100%"
       >
         <Text bold color={Colors.AccentRed}>
-          {t('Qwen OAuth Authentication Timeout')}
+          {t('{{provider}} Authentication Timeout', {
+            provider: providerLabel,
+          })}
         </Text>
 
         <Box marginTop={1}>
@@ -253,7 +260,9 @@ export function QwenOAuthProgress({
         width="100%"
       >
         <Text bold color={Colors.AccentRed}>
-          Qwen OAuth Authentication Error
+          {t('{{provider}} Authentication Error', {
+            provider: providerLabel,
+          })}
         </Text>
 
         <Box marginTop={1}>
@@ -285,7 +294,9 @@ export function QwenOAuthProgress({
         <Box>
           <Text>
             <Spinner type="dots" />
-            {t('Waiting for Qwen OAuth authentication...')}
+            {t('Waiting for {{provider}} authentication...', {
+              provider: providerLabel,
+            })}
           </Text>
         </Box>
         <Box marginTop={1} justifyContent="space-between">

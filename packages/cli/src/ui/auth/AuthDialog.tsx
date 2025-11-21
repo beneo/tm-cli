@@ -44,6 +44,11 @@ export function AuthDialog(): React.JSX.Element {
       value: AuthType.QWEN_OAUTH,
     },
     {
+      key: AuthType.DINGTALK_OAUTH,
+      label: t('DingTalk OAuth'),
+      value: AuthType.DINGTALK_OAUTH,
+    },
+    {
       key: AuthType.USE_OPENAI,
       label: t('OpenAI'),
       value: AuthType.USE_OPENAI,
