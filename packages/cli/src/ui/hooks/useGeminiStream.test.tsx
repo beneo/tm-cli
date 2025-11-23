@@ -2090,6 +2090,70 @@ describe('useGeminiStream', () => {
     });
   });
 
+  describe('handleRetryEvent', () => {
+    it('should add an info message when a retry event is received', async () => {
+      mockSendMessageStream.mockReturnValue(
+        (async function* () {
+          yield {
+            type: ServerGeminiEventType.Retry,
+            attempt: 1,
+            totalAttempts: 6,
+            reason: 'API_500',
+            delayMs: 5000,
+          };
+          yield {
+            type: ServerGeminiEventType.Content,
+            value: 'Recovered after retry',
+          };
+          yield {
+            type: ServerGeminiEventType.Finished,
+            value: { reason: 'STOP', usageMetadata: undefined },
+          };
+        })(),
+      );
+
+      const { result } = renderHook(() =>
+        useGeminiStream(
+          new MockedGeminiClientClass(mockConfig),
+          [],
+          mockAddItem,
+          mockConfig,
+          mockLoadedSettings,
+          mockOnDebugMessage,
+          mockHandleSlashCommand,
+          false,
+          () => 'vscode' as EditorType,
+          () => {},
+          () => Promise.resolve(),
+          false,
+          () => {},
+          () => {},
+          () => {},
+          false,
+          () => {},
+          80,
+          24,
+        ),
+      );
+
+      await act(async () => {
+        await result.current.submitQuery('Trigger retry');
+      });
+
+      await waitFor(() => {
+        expect(
+          mockAddItem.mock.calls.some(
+            ([message]) =>
+              message.type === 'info' &&
+              typeof message.text === 'string' &&
+              message.text.includes('Retry 1/5') &&
+              message.text.includes('server error (500)'),
+          ),
+        ).toBe(true);
+      });
+    });
+  });
+
   it('should process @include commands, adding user turn after processing to prevent race conditions', async () => {
     const rawQuery = '@include file.txt Summarize this.';
     const processedQueryParts = [

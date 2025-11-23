@@ -875,6 +875,7 @@ export default {
   'files to customize your interactions with Qwen Code.':
     'files to customize your interactions with Qwen Code.',
   'for more information.': 'for more information.',
+  'API logs:': 'API logs:',
 
   // ============================================================================
   // Exit Screen / Stats

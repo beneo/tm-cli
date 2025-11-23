@@ -15,6 +15,7 @@ import { InfoMessage } from './messages/InfoMessage.js';
 import { ErrorMessage } from './messages/ErrorMessage.js';
 import { ToolGroupMessage } from './messages/ToolGroupMessage.js';
 import { GeminiMessageContent } from './messages/GeminiMessageContent.js';
+import { ReasoningMessage } from './messages/ReasoningMessage.js';
 import { CompressionMessage } from './messages/CompressionMessage.js';
 import { SummaryMessage } from './messages/SummaryMessage.js';
 import { WarningMessage } from './messages/WarningMessage.js';
@@ -84,6 +85,9 @@ const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
           }
           terminalWidth={terminalWidth}
         />
+      )}
+      {itemForDisplay.type === 'reasoning' && (
+        <ReasoningMessage text={itemForDisplay.text} isPending={isPending} />
       )}
       {itemForDisplay.type === 'info' && (
         <InfoMessage text={itemForDisplay.text} />

@@ -39,6 +39,11 @@ export {
   getDingtalkOAuthClient,
 } from './dingtalk/dingtalkOAuth2.js';
 export { DingtalkContentGenerator } from './dingtalk/dingtalkContentGenerator.js';
+export {
+  fetchDingtalkModels,
+  type ModelFetchResult,
+  type ModelFetchError,
+} from './dingtalk/dingtalkModels.js';
 export * from './code_assist/server.js';
 export * from './code_assist/types.js';
 

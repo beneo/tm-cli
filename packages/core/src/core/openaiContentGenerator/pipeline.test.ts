@@ -78,7 +78,9 @@ describe('ContentGenerationPipeline', () => {
     } as unknown as ErrorHandler;
 
     // Mock configs
-    mockCliConfig = {} as Config;
+    mockCliConfig = {
+      getDebugMode: vi.fn().mockReturnValue(false),
+    } as unknown as Config;
     mockContentGeneratorConfig = {
       model: 'test-model',
       authType: 'openai' as AuthType,
@@ -318,11 +320,11 @@ describe('ContentGenerationPipeline', () => {
       const mockChunk1 = {
         id: 'chunk-1',
         choices: [{ delta: { content: 'Hello' }, finish_reason: null }],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [{ delta: { content: ' response' }, finish_reason: 'stop' }],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {
@@ -395,14 +397,21 @@ describe('ContentGenerationPipeline', () => {
 
       const mockChunk1 = {
         id: 'chunk-1',
-        choices: [{ delta: { content: '' }, finish_reason: null }],
-      } as OpenAI.Chat.ChatCompletionChunk;
+        choices: [
+          {
+            delta: {
+              content: '',
+            },
+            finish_reason: null,
+          },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [
           { delta: { content: 'Hello response' }, finish_reason: 'stop' },
         ],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {
@@ -418,7 +427,10 @@ describe('ContentGenerationPipeline', () => {
 
       const mockValidResponse = new GenerateContentResponse();
       mockValidResponse.candidates = [
-        { content: { parts: [{ text: 'Hello response' }], role: 'model' } },
+        {
+          content: { parts: [{ text: 'Hello response' }], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
       ];
 
       (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
@@ -442,6 +454,190 @@ describe('ContentGenerationPipeline', () => {
       // Assert
       expect(results).toHaveLength(1); // Empty response should be filtered out
       expect(results[0]).toBe(mockValidResponse);
+    });
+
+    it('should not filter responses that only contain reasoning content', async () => {
+      // Arrange
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [{ delta: { content: '' }, finish_reason: null }],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [
+          { delta: { content: 'Hello response' }, finish_reason: 'stop' },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockReasoningResponse = new GenerateContentResponse();
+      mockReasoningResponse.candidates = [
+        { content: { parts: [], role: 'model' } },
+      ];
+      (mockReasoningResponse as unknown as Record<string, unknown>)[
+        'reasoningContent'
+      ] = '思考中';
+
+      const mockValidResponse = new GenerateContentResponse();
+      mockValidResponse.candidates = [
+        {
+          content: { parts: [{ text: 'Hello response' }], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockReasoningResponse)
+        .mockReturnValueOnce(mockValidResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+        },
+      });
+
+      // Act
+      const iterator = await pipeline.executeStream(request, userPromptId);
+      const results: GenerateContentResponse[] = [];
+      for await (const value of iterator) {
+        results.push(value);
+      }
+
+      // Assert
+      expect('reasoningContent' in mockReasoningResponse).toBe(true);
+      const callResults = (
+        mockConverter.convertOpenAIChunkToGemini as Mock
+      ).mock.results.map((r) => r.value);
+      expect(callResults).toEqual([mockReasoningResponse, mockValidResponse]);
+      expect(mockConverter.convertOpenAIChunkToGemini).toHaveBeenCalledTimes(2);
+      expect(results).toContain(mockReasoningResponse);
+      expect(results).toContain(mockValidResponse);
+    });
+    it('should log reasoning details when debug mode is enabled', async () => {
+      // Arrange
+      (mockCliConfig.getDebugMode as Mock).mockReturnValue(true);
+      pipeline = new ContentGenerationPipeline(mockConfig);
+      expect((pipeline as unknown as { debugMode: boolean }).debugMode).toBe(
+        true,
+      );
+
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+
+      const reasoningChunk = {
+        id: 'chunk-debug',
+        choices: [
+          {
+            delta: {
+              content: '',
+              reasoning_content: { text: 'raw-thought' },
+            },
+            finish_reason: null,
+          },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+
+      const reasoningResponse = new GenerateContentResponse();
+      (reasoningResponse as unknown as Record<string, unknown>)[
+        'reasoningContent'
+      ] = 'final-thought';
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock).mockReturnValue(
+        reasoningResponse,
+      );
+      (mockClient.chat.completions.create as Mock).mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield reasoningChunk;
+        },
+      });
+
+      const consoleSpy = vi
+        .spyOn(console, 'debug')
+        .mockImplementation(() => {});
+
+      // Act
+      const iterator = await pipeline.executeStream(request, 'prompt-id');
+      for await (const _ of iterator) {
+        // drain iterator
+      }
+
+      // Assert
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[Reasoning]',
+        expect.objectContaining({
+          chunkId: 'chunk-debug',
+          raw: expect.stringContaining('raw-thought'),
+          normalized: expect.stringContaining('final-thought'),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should not log reasoning details when debug mode is disabled', async () => {
+      // Arrange
+      (mockCliConfig.getDebugMode as Mock).mockReturnValue(false);
+      pipeline = new ContentGenerationPipeline(mockConfig);
+      expect((pipeline as unknown as { debugMode: boolean }).debugMode).toBe(
+        false,
+      );
+
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+
+      const reasoningChunk = {
+        id: 'chunk-no-debug',
+        choices: [
+          {
+            delta: {
+              content: '',
+              reasoning_content: { text: 'raw-thought' },
+            },
+            finish_reason: null,
+          },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+
+      const reasoningResponse = new GenerateContentResponse();
+      (reasoningResponse as unknown as Record<string, unknown>)[
+        'reasoningContent'
+      ] = 'final-thought';
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock).mockReturnValue(
+        reasoningResponse,
+      );
+      (mockClient.chat.completions.create as Mock).mockResolvedValue({
+        async *[Symbol.asyncIterator]() {
+          yield reasoningChunk;
+        },
+      });
+
+      const consoleSpy = vi
+        .spyOn(console, 'debug')
+        .mockImplementation(() => {});
+
+      // Act
+      const iterator = await pipeline.executeStream(request, 'prompt-id');
+      for await (const _ of iterator) {
+        // drain iterator
+      }
+
+      // Assert
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
 
     it('should handle streaming errors and reset tool calls', async () => {
@@ -553,13 +749,13 @@ describe('ContentGenerationPipeline', () => {
         choices: [
           { delta: { content: 'Hello response' }, finish_reason: null },
         ],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Finish reason chunk (empty content, has finish_reason)
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Usage metadata chunk (empty candidates, has usage)
       const mockChunk3 = {
@@ -569,7 +765,7 @@ describe('ContentGenerationPipeline', () => {
         model: 'test-model',
         choices: [],
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {
@@ -674,14 +870,14 @@ describe('ContentGenerationPipeline', () => {
         choices: [
           { delta: { content: 'Hello response' }, finish_reason: null },
         ],
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Final chunk with both finish_reason and usage (ideal case)
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {
@@ -757,14 +953,14 @@ describe('ContentGenerationPipeline', () => {
           { delta: { content: 'Hello response' }, finish_reason: null },
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Finish chunk with zero usage (has finishReason but usage is all zeros)
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Final usage chunk with actual usage data
       const mockChunk3 = {
@@ -774,7 +970,7 @@ describe('ContentGenerationPipeline', () => {
         model: 'test-model',
         choices: [],
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {
@@ -878,14 +1074,14 @@ describe('ContentGenerationPipeline', () => {
           { delta: { content: 'Hello response' }, finish_reason: null },
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       // Finish chunk with both finishReason and valid usage in same chunk
       const mockChunk2 = {
         id: 'chunk-2',
         choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-      } as OpenAI.Chat.ChatCompletionChunk;
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
 
       const mockStream = {
         async *[Symbol.asyncIterator]() {

@@ -22,6 +22,7 @@ import { GenerateContentResponse, FinishReason } from '@google/genai';
 import type OpenAI from 'openai';
 import { safeJsonParse } from '../../utils/safeJsonParse.js';
 import { StreamingToolCallParser } from './streamingToolCallParser.js';
+import { InvalidStreamError } from '../geminiChat.js';
 
 /**
  * Extended usage type that supports both OpenAI standard format and alternative formats
@@ -29,6 +30,13 @@ import { StreamingToolCallParser } from './streamingToolCallParser.js';
  */
 interface ExtendedCompletionUsage extends OpenAI.CompletionUsage {
   cached_tokens?: number;
+}
+
+/**
+ * Extended message/delta type with reasoning_content field
+ */
+interface MessageWithReasoning {
+  reasoning_content?: unknown;
 }
 
 /**
@@ -65,6 +73,117 @@ export class OpenAIContentConverter {
 
   constructor(model: string) {
     this.model = model;
+  }
+
+  /**
+   * Normalizes reasoning_content from providers (string or array of objects)
+   * into a single concatenated string.
+   */
+  private extractReasoningContent(reasoningContent: unknown): string {
+    if (!reasoningContent) {
+      return '';
+    }
+
+    if (typeof reasoningContent === 'string') {
+      return reasoningContent;
+    }
+
+    const fragments: string[] = [];
+    this.collectReasoningFragments(reasoningContent, fragments);
+    if (fragments.length > 0) {
+      return fragments.join('');
+    }
+    return '';
+  }
+
+  private collectReasoningFragments(value: unknown, fragments: string[]): void {
+    if (value === undefined || value === null) {
+      return;
+    }
+
+    if (typeof value === 'string') {
+      if (value) {
+        fragments.push(value);
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        this.collectReasoningFragments(item, fragments);
+      }
+      return;
+    }
+
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const textualKeys = new Set([
+        'text',
+        'summary',
+        'reasoning',
+        'explanation',
+        'detail',
+        'details',
+        'message',
+      ]);
+      const structuredKeys = new Set([
+        'content',
+        'messages',
+        'parts',
+        'steps',
+        'items',
+        'annotations',
+      ]);
+
+      let hasCollected = false;
+      for (const [key, nested] of Object.entries(record)) {
+        if (textualKeys.has(key) && typeof nested === 'string') {
+          if (nested) {
+            fragments.push(nested);
+            hasCollected = true;
+          }
+          continue;
+        }
+        if (structuredKeys.has(key)) {
+          const initialLength = fragments.length;
+          this.collectReasoningFragments(nested, fragments);
+          if (fragments.length > initialLength) {
+            hasCollected = true;
+          }
+          continue;
+        }
+        if (typeof nested === 'string') {
+          if (
+            !['type', 'role', 'status', 'index', 'id'].includes(key) &&
+            nested
+          ) {
+            fragments.push(nested);
+            hasCollected = true;
+          }
+        } else if (
+          Array.isArray(nested) ||
+          (nested && typeof nested === 'object')
+        ) {
+          const initialLength = fragments.length;
+          this.collectReasoningFragments(nested, fragments);
+          if (fragments.length > initialLength) {
+            hasCollected = true;
+          }
+        }
+      }
+
+      if (!hasCollected) {
+        fragments.push(this.safeStringify(value));
+      }
+    }
+  }
+
+  private safeStringify(value: unknown): string {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   /**
@@ -531,6 +650,20 @@ export class OpenAIContentConverter {
   convertOpenAIResponseToGemini(
     openaiResponse: OpenAI.Chat.ChatCompletion,
   ): GenerateContentResponse {
+    if (!openaiResponse.choices || openaiResponse.choices.length === 0) {
+      // Log the full response for debugging
+      console.error(
+        '[OpenAI Response Error] Full response:',
+        JSON.stringify(openaiResponse, null, 2),
+      );
+      throw new InvalidStreamError(
+        `Invalid OpenAI response: missing or empty choices array. ` +
+          `Response ID: ${openaiResponse.id || 'unknown'}, ` +
+          `Model: ${openaiResponse.model || 'unknown'}`,
+        'NO_RESPONSE_TEXT',
+      );
+    }
+
     const choice = openaiResponse.choices[0];
     const response = new GenerateContentResponse();
 
@@ -559,6 +692,15 @@ export class OpenAIContentConverter {
           });
         }
       }
+    }
+
+    // Handle reasoning_content (non-streaming)
+    const reasoningContent = this.extractReasoningContent(
+      (choice.message as MessageWithReasoning).reasoning_content,
+    );
+    if (reasoningContent) {
+      (response as unknown as Record<string, unknown>)['reasoningContent'] =
+        reasoningContent;
     }
 
     response.responseId = openaiResponse.id;
@@ -637,6 +779,15 @@ export class OpenAIContentConverter {
         if (typeof choice.delta.content === 'string') {
           parts.push({ text: choice.delta.content });
         }
+      }
+
+      // Handle reasoning_content (streaming)
+      const reasoningContent = this.extractReasoningContent(
+        (choice.delta as MessageWithReasoning | undefined)?.reasoning_content,
+      );
+      if (reasoningContent) {
+        (response as unknown as Record<string, unknown>)['reasoningContent'] =
+          reasoningContent;
       }
 
       // Handle tool calls using the streaming parser

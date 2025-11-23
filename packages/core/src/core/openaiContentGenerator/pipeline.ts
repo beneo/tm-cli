@@ -15,6 +15,28 @@ import type { OpenAICompatibleProvider } from './provider/index.js';
 import { OpenAIContentConverter } from './converter.js';
 import type { TelemetryService, RequestContext } from './telemetryService.js';
 import type { ErrorHandler } from './errorHandler.js';
+import { InvalidStreamError } from '../geminiChat.js';
+
+const NON_STREAM_RETRY_OPTIONS = {
+  maxAttempts: 6,
+  initialDelayMs: 5000,
+};
+
+const NETWORK_ERROR_CODES = [
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+];
+
+interface RetryDecision {
+  retryable: boolean;
+  reason?: string;
+  delayMs?: number;
+}
 
 export interface PipelineConfig {
   cliConfig: Config;
@@ -28,6 +50,7 @@ export class ContentGenerationPipeline {
   client: OpenAI;
   private converter: OpenAIContentConverter;
   private contentGeneratorConfig: ContentGeneratorConfig;
+  private readonly debugMode: boolean;
 
   constructor(private config: PipelineConfig) {
     this.contentGeneratorConfig = config.contentGeneratorConfig;
@@ -35,16 +58,19 @@ export class ContentGenerationPipeline {
     this.converter = new OpenAIContentConverter(
       this.contentGeneratorConfig.model,
     );
+    this.debugMode =
+      typeof this.config.cliConfig?.getDebugMode === 'function'
+        ? this.config.cliConfig.getDebugMode()
+        : false;
   }
 
   async execute(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
-    return this.executeWithErrorHandling(
+    return this.executeWithRetry(
       request,
       userPromptId,
-      false,
       async (openaiRequest, context) => {
         const openaiResponse = (await this.client.chat.completions.create(
           openaiRequest,
@@ -56,7 +82,6 @@ export class ContentGenerationPipeline {
         const geminiResponse =
           this.converter.convertOpenAIResponseToGemini(openaiResponse);
 
-        // Log success
         await this.config.telemetryService.logSuccess(
           context,
           geminiResponse,
@@ -129,11 +154,33 @@ export class ContentGenerationPipeline {
 
         const response = this.converter.convertOpenAIChunkToGemini(chunk);
 
+        if (this.debugMode) {
+          this.logReasoningDebug(chunk, response);
+        }
+
         // Stage 2b: Filter empty responses to avoid downstream issues
+        const hasCandidates =
+          (response.candidates?.length ?? 0) > 0 &&
+          response.candidates?.[0]?.content !== undefined;
+        const hasContentParts =
+          (response.candidates?.[0]?.content?.parts?.length ?? 0) > 0;
+        const hasFinishReason = !!response.candidates?.[0]?.finishReason;
+        const hasUsage = !!response.usageMetadata;
+        const reasoningFromResponse = (
+          response as unknown as Record<string, unknown>
+        )['reasoningContent'];
+        const hasReasoningContentFromResponse =
+          typeof reasoningFromResponse === 'string' &&
+          reasoningFromResponse.length > 0;
+        const hasReasoningContentFromChunk =
+          this.chunkHasReasoningContent(chunk);
+        const hasReasoningContent =
+          hasReasoningContentFromResponse || hasReasoningContentFromChunk;
+
         if (
-          response.candidates?.[0]?.content?.parts?.length === 0 &&
-          !response.candidates?.[0]?.finishReason &&
-          !response.usageMetadata
+          !hasUsage &&
+          (!hasCandidates ||
+            (!hasContentParts && !hasFinishReason && !hasReasoningContent))
         ) {
           continue;
         }
@@ -246,6 +293,101 @@ export class ContentGenerationPipeline {
     return true;
   }
 
+  /**
+   * Checks whether the raw OpenAI chunk carries reasoning content so we don't
+   * filter it out as "empty" during streaming.
+   */
+  private chunkHasReasoningContent(
+    chunk: OpenAI.Chat.ChatCompletionChunk,
+  ): boolean {
+    for (const reasoning of this.getChunkReasoning(chunk)) {
+      if (typeof reasoning === 'string' && reasoning.length > 0) {
+        return true;
+      }
+      if (Array.isArray(reasoning) && reasoning.length > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private getChunkReasoning(chunk: OpenAI.Chat.ChatCompletionChunk): unknown[] {
+    const reasonings: unknown[] = [];
+    for (const choice of chunk.choices ?? []) {
+      const deltaReasoning = (
+        choice as {
+          delta?: { reasoning_content?: unknown };
+        }
+      ).delta?.reasoning_content;
+      const messageReasoning = (
+        choice as {
+          message?: { reasoning_content?: unknown };
+        }
+      ).message?.reasoning_content;
+
+      if (deltaReasoning !== undefined) {
+        reasonings.push(deltaReasoning);
+      }
+      if (messageReasoning !== undefined) {
+        reasonings.push(messageReasoning);
+      }
+    }
+    return reasonings;
+  }
+
+  private logReasoningDebug(
+    chunk: OpenAI.Chat.ChatCompletionChunk,
+    response: GenerateContentResponse,
+  ): void {
+    const rawReasoning = this.getChunkReasoning(chunk);
+    const normalizedReasoning = (
+      response as unknown as Record<string, unknown>
+    )['reasoningContent'];
+
+    if (!rawReasoning && !normalizedReasoning) {
+      return;
+    }
+
+    const previewRaw = this.formatReasoningPreview(rawReasoning);
+    const previewNormalized =
+      typeof normalizedReasoning === 'string'
+        ? this.formatReasoningPreview(normalizedReasoning)
+        : undefined;
+
+    console.debug('[Reasoning]', {
+      chunkId: chunk.id ?? 'unknown',
+      raw: previewRaw ?? '(none)',
+      normalized: previewNormalized ?? '(none)',
+    });
+  }
+
+  private formatReasoningPreview(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    const MAX_LENGTH = 400;
+    let stringValue: string;
+
+    if (typeof value === 'string') {
+      stringValue = value;
+    } else {
+      try {
+        stringValue = JSON.stringify(value);
+      } catch {
+        stringValue = String(value);
+      }
+    }
+
+    if (!stringValue) {
+      return undefined;
+    }
+
+    return stringValue.length > MAX_LENGTH
+      ? `${stringValue.slice(0, MAX_LENGTH)}…`
+      : stringValue;
+  }
+
   private async buildRequest(
     request: GenerateContentParameters,
     userPromptId: string,
@@ -328,7 +470,214 @@ export class ContentGenerationPipeline {
       ...addParameterIfDefined('frequency_penalty', 'frequency_penalty'),
     };
 
+    // Vendor-specific pass-through parameters (from config, request.config, or request)
+    const vendorParams = ['reasoning_effort', 'thinking_type'] as const;
+    const configSamplingParamsRecord = configSamplingParams as
+      | Record<string, unknown>
+      | undefined;
+    const requestConfig =
+      (request.config as Record<string, unknown> | undefined) || {};
+    const requestAsRecord = request as unknown as Record<string, unknown>;
+
+    for (const key of vendorParams) {
+      const value =
+        configSamplingParamsRecord?.[key] ??
+        requestConfig?.[key] ??
+        requestAsRecord?.[key];
+      if (value !== undefined) {
+        params[key] = value;
+      }
+    }
+
     return params;
+  }
+
+  /**
+   * Retry wrapper for non-streaming execution. Retries on invalid content,
+   * 429, 5xx, and transient network failures with linear backoff.
+   */
+  private async executeWithRetry<T>(
+    request: GenerateContentParameters,
+    userPromptId: string,
+    executor: (
+      openaiRequest: OpenAI.Chat.ChatCompletionCreateParams,
+      context: RequestContext,
+    ) => Promise<T>,
+  ): Promise<T> {
+    let lastError: unknown;
+
+    for (
+      let attempt = 0;
+      attempt < NON_STREAM_RETRY_OPTIONS.maxAttempts;
+      attempt++
+    ) {
+      const attemptNumber = attempt + 1;
+      const context = this.createRequestContext(userPromptId, false);
+
+      try {
+        const openaiRequest = await this.buildRequest(
+          request,
+          userPromptId,
+          false,
+        );
+
+        const result = await executor(openaiRequest, context);
+
+        context.duration = Date.now() - context.startTime;
+        return result;
+      } catch (error) {
+        lastError = error;
+        const decision = this.classifyNonStreamErrorForRetry(error);
+        const hasAttemptsLeft =
+          attempt < NON_STREAM_RETRY_OPTIONS.maxAttempts - 1;
+
+        if (decision.retryable && hasAttemptsLeft) {
+          const delayMs =
+            decision.delayMs ??
+            NON_STREAM_RETRY_OPTIONS.initialDelayMs * attemptNumber;
+
+          // Extract error message for display
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : typeof error === 'string'
+                ? error
+                : JSON.stringify(error);
+
+          console.warn(
+            `[Retry ${attemptNumber}/${NON_STREAM_RETRY_OPTIONS.maxAttempts - 1}] Non-stream request failed (${decision.reason ?? 'unknown'}), retrying in ${delayMs}ms`,
+          );
+          console.warn(`Error details: ${errorMessage}`);
+
+          await this.delay(delayMs);
+          continue;
+        }
+
+        return await this.handleError(
+          error,
+          context,
+          request,
+          userPromptId,
+          false,
+        );
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Request failed after all retries.');
+  }
+
+  private classifyNonStreamErrorForRetry(error: unknown): RetryDecision {
+    // Debug logging to diagnose retry issues
+    if (this.debugMode) {
+      console.error('===== [NON-STREAM] ERROR CLASSIFICATION DEBUG =====');
+      console.error('Error type:', typeof error);
+      console.error('Error instanceof Error:', error instanceof Error);
+      console.error('Error name:', (error as Error)?.name);
+      console.error('Error constructor:', (error as Error)?.constructor?.name);
+      console.error(
+        'Error instanceof InvalidStreamError:',
+        error instanceof InvalidStreamError,
+      );
+      console.error('Error message:', (error as Error)?.message);
+      if (error instanceof InvalidStreamError) {
+        console.error('InvalidStreamError type:', error.type);
+      }
+      console.error('==================================================');
+    }
+
+    if (error instanceof InvalidStreamError) {
+      return { retryable: true, reason: error.type };
+    }
+
+    // Fallback: check by name if instanceof fails (can happen with bundling issues)
+    if (
+      error instanceof Error &&
+      error.name === 'InvalidStreamError' &&
+      'type' in error
+    ) {
+      const type = (error as { type: string }).type;
+      if (this.debugMode) {
+        console.warn(
+          `[FALLBACK] Using name-based check for InvalidStreamError (type: ${type})`,
+        );
+      }
+      return { retryable: true, reason: type };
+    }
+
+    const status =
+      typeof (error as { status?: unknown }).status === 'number'
+        ? ((error as { status: number }).status as number)
+        : undefined;
+
+    if (status === 429) {
+      return { retryable: true, reason: 'API_429' };
+    }
+    if (status !== undefined && status >= 500) {
+      return { retryable: true, reason: `API_${status}` };
+    }
+
+    if (this.isAbortError(error)) {
+      return { retryable: false };
+    }
+
+    if (this.isNetworkError(error)) {
+      return { retryable: true, reason: 'NETWORK_ERROR' };
+    }
+
+    return { retryable: false };
+  }
+
+  private isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === 'AbortError';
+  }
+
+  private isNetworkError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const code =
+      typeof (error as { code?: unknown }).code === 'string'
+        ? ((error as { code?: unknown }).code as string)
+        : undefined;
+    if (code) {
+      const upperCode = code.toUpperCase();
+      if (
+        NETWORK_ERROR_CODES.some((networkCode) =>
+          upperCode.includes(networkCode),
+        )
+      ) {
+        return true;
+      }
+    }
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof (error as { message?: unknown }).message === 'string'
+          ? ((error as { message?: unknown }).message as string)
+          : undefined;
+
+    if (message) {
+      const normalized = message.toLowerCase();
+      if (
+        normalized.includes('network error') ||
+        normalized.includes('fetch failed') ||
+        normalized.includes('socket hang up') ||
+        normalized.includes('etimedout') ||
+        normalized.includes('timed out')
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

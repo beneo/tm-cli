@@ -8,6 +8,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { OpenAIContentConverter } from './converter.js';
 import type { StreamingToolCallParser } from './streamingToolCallParser.js';
 import type { GenerateContentParameters, Content } from '@google/genai';
+import type OpenAI from 'openai';
+
+/**
+ * Extended message/delta type with reasoning_content field for testing
+ */
+interface MessageWithReasoning {
+  reasoning_content?: unknown;
+}
 
 describe('OpenAIContentConverter', () => {
   let converter: OpenAIContentConverter;
@@ -140,6 +148,167 @@ describe('OpenAIContentConverter', () => {
 
       expect(toolMessage).toBeDefined();
       expect(toolMessage?.content).toBe('{"data":{"value":42}}');
+    });
+  });
+
+  describe('reasoning_content parsing', () => {
+    it('should handle string reasoning_content in streaming chunks', () => {
+      const chunk: OpenAI.Chat.ChatCompletionChunk = {
+        id: 'chunk-1',
+        created: 123,
+        model: 'test-model',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              reasoning_content: '思考中',
+            } as OpenAI.Chat.ChatCompletionChunk.Choice.Delta &
+              MessageWithReasoning,
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIChunkToGemini(chunk);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBe('思考中');
+    });
+
+    it('should handle string reasoning_content in non-streaming responses', () => {
+      const response: OpenAI.Chat.ChatCompletion = {
+        id: 'resp-1',
+        created: 456,
+        model: 'test-model',
+        object: 'chat.completion',
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: '',
+              reasoning_content: '逐步分析',
+            } as OpenAI.Chat.ChatCompletionMessage & MessageWithReasoning,
+            finish_reason: 'stop',
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIResponseToGemini(response);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBe('逐步分析');
+    });
+
+    it('should handle array reasoning_content with nested objects', () => {
+      const chunk: OpenAI.Chat.ChatCompletionChunk = {
+        id: 'chunk-2',
+        created: 123,
+        model: 'test-model',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              reasoning_content: [{ text: '第一步' }, { text: '第二步' }],
+            } as OpenAI.Chat.ChatCompletionChunk.Choice.Delta &
+              MessageWithReasoning,
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIChunkToGemini(chunk);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBe('第一步第二步');
+    });
+
+    it('should handle object reasoning_content with nested content arrays', () => {
+      const chunk: OpenAI.Chat.ChatCompletionChunk = {
+        id: 'chunk-3',
+        created: 123,
+        model: 'test-model',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              reasoning_content: {
+                content: [{ text: '分析A' }, { text: '分析B' }],
+                summary: '结论',
+              },
+            } as OpenAI.Chat.ChatCompletionChunk.Choice.Delta &
+              MessageWithReasoning,
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIChunkToGemini(chunk);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBe('分析A分析B结论');
+    });
+
+    it('should stringify reasoning_content objects without textual fields', () => {
+      const chunk: OpenAI.Chat.ChatCompletionChunk = {
+        id: 'chunk-4',
+        created: 123,
+        model: 'test-model',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              reasoning_content: { foo: 'bar', type: 'meta' },
+            } as OpenAI.Chat.ChatCompletionChunk.Choice.Delta &
+              MessageWithReasoning,
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIChunkToGemini(chunk);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBe('{"foo":"bar","type":"meta"}');
+    });
+
+    it('should return empty string for empty or null reasoning_content', () => {
+      const chunk: OpenAI.Chat.ChatCompletionChunk = {
+        id: 'chunk-5',
+        created: 123,
+        model: 'test-model',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              reasoning_content: null,
+            } as OpenAI.Chat.ChatCompletionChunk.Choice.Delta &
+              MessageWithReasoning,
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      };
+
+      const result = converter.convertOpenAIChunkToGemini(chunk);
+      expect(
+        (result as unknown as Record<string, unknown>)['reasoningContent'],
+      ).toBeUndefined();
     });
   });
 });

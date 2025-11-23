@@ -10,6 +10,7 @@ import { ApiErrorEvent, ApiResponseEvent } from '../../telemetry/types.js';
 import { OpenAILogger } from '../../utils/openaiLogger.js';
 import type { GenerateContentResponse } from '@google/genai';
 import type OpenAI from 'openai';
+import type { Storage } from '../../config/storage.js';
 
 export interface RequestContext {
   userPromptId: string;
@@ -47,12 +48,13 @@ export class DefaultTelemetryService implements TelemetryService {
 
   constructor(
     private config: Config,
-    private enableOpenAILogging: boolean = false,
+    private enableOpenAILogging: boolean = true,
     openAILoggingDir?: string,
+    storage?: Storage,
   ) {
-    // Always create a new logger instance to ensure correct working directory
-    // If no custom directory is provided, undefined will use the default path
-    this.logger = new OpenAILogger(openAILoggingDir);
+    // Create logger with Storage to use unified log location
+    // Custom directory takes precedence, then Storage, then fallback to cwd
+    this.logger = new OpenAILogger(openAILoggingDir, storage);
   }
 
   async logSuccess(

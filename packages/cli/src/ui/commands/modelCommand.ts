@@ -52,7 +52,10 @@ export const modelCommand: SlashCommand = {
       };
     }
 
-    const availableModels = getAvailableModelsForAuthType(authType);
+    const dynamicModels = config.getAvailableModelsForAuth?.(authType) || [];
+    const availableModels = getAvailableModelsForAuthType(authType, {
+      dynamicModels,
+    });
 
     if (availableModels.length === 0) {
       return {

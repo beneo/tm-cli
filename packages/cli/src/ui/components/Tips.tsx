@@ -41,6 +41,12 @@ export const Tips: React.FC<TipsProps> = ({ config }) => {
         </Text>{' '}
         {t('for more information.')}
       </Text>
+      <Text color={theme.text.primary}>
+        {geminiMdFileCount === 0 ? '5.' : '4.'} {t('API logs:')}{' '}
+        <Text color={theme.text.accent}>
+          {config.storage.getProjectTempDir()}/api-logs/
+        </Text>
+      </Text>
     </Box>
   );
 };

@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import * as os from 'os';
+import type { Storage } from '../config/storage.js';
 
 /**
  * Logger specifically for OpenAI API requests and responses
@@ -19,8 +20,9 @@ export class OpenAILogger {
   /**
    * Creates a new OpenAI logger
    * @param customLogDir Optional custom log directory path (supports relative paths, absolute paths, and ~ expansion)
+   * @param storage Optional Storage instance to use project temp directory
    */
-  constructor(customLogDir?: string) {
+  constructor(customLogDir?: string, storage?: Storage) {
     if (customLogDir) {
       // Resolve relative paths to absolute paths
       // Handle ~ expansion
@@ -32,9 +34,20 @@ export class OpenAILogger {
         resolvedPath = path.resolve(process.cwd(), customLogDir);
       }
       this.logDir = path.normalize(resolvedPath);
+    } else if (storage) {
+      // Use project temp directory for unified log location
+      this.logDir = path.join(storage.getProjectTempDir(), 'api-logs');
     } else {
+      // Fallback to current working directory
       this.logDir = path.join(process.cwd(), 'logs', 'openai');
     }
+  }
+
+  /**
+   * Get the log directory path
+   */
+  getLogDir(): string {
+    return this.logDir;
   }
 
   /**

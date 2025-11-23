@@ -93,6 +93,7 @@ import {
 import { DEFAULT_QWEN_EMBEDDING_MODEL, DEFAULT_QWEN_MODEL } from './models.js';
 import { Storage } from './storage.js';
 import { DEFAULT_DASHSCOPE_BASE_URL } from '../core/openaiContentGenerator/constants.js';
+import type { ModelFetchError } from '../dingtalk/dingtalkModels.js';
 
 // Re-export types
 export type { AnyToolInvocation, FileFilteringOptions, MCPOAuthConfig };
@@ -369,6 +370,9 @@ export class Config {
   private ideMode: boolean;
 
   private inFallbackMode = false;
+  private availableModelsByAuth: Partial<Record<AuthType, string[]>> = {};
+  private modelFetchErrors: Map<AuthType, ModelFetchError | undefined> =
+    new Map();
   private readonly maxSessionTurns: number;
   private readonly sessionTokenLimit: number;
   private readonly listExtensions: boolean;
@@ -561,6 +565,11 @@ export class Config {
     this.toolRegistry = await this.createToolRegistry();
 
     await this.geminiClient.initialize();
+
+    // Display API logs location
+    const logDir = this.storage.getProjectTempDir();
+    const apiLogsPath = `${logDir}/api-logs/`;
+    console.log(`📁 API logs: ${apiLogsPath}`);
   }
 
   getContentGenerator(): ContentGenerator {
@@ -585,6 +594,31 @@ export class Config {
     if (credentials.model) {
       this._generationConfig.model = credentials.model;
     }
+  }
+
+  /**
+   * Cache dynamically discovered models for an auth type.
+   */
+  setAvailableModelsForAuth(authType: AuthType, models: string[]): void {
+    this.availableModelsByAuth[authType] = models;
+  }
+
+  /**
+   * Retrieve cached models for an auth type, if available.
+   */
+  getAvailableModelsForAuth(authType: AuthType): string[] | undefined {
+    return this.availableModelsByAuth[authType];
+  }
+
+  setModelFetchError(
+    authType: AuthType,
+    error: ModelFetchError | undefined,
+  ): void {
+    this.modelFetchErrors.set(authType, error);
+  }
+
+  getModelFetchError(authType: AuthType): ModelFetchError | undefined {
+    return this.modelFetchErrors.get(authType);
   }
 
   async refreshAuth(authMethod: AuthType, isInitialAuth?: boolean) {

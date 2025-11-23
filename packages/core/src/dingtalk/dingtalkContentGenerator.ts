@@ -20,6 +20,10 @@ import type { Config } from '../config/config.js';
 import type { ContentGeneratorConfig } from '../core/contentGenerator.js';
 
 const DEFAULT_DINGTALK_BASE_URL = 'http://localhost:8080/v1';
+const STREAM_KEY = 'stream';
+const REASONING_EFFORT_KEY = 'reasoning_effort';
+const THINKING_TYPE_KEY = 'thinking_type';
+const DOUDAO_SEED_PREFIX = 'doubao-seed-1.6';
 
 export class DingtalkContentGenerator extends OpenAIContentGenerator {
   private dingtalkClient: IDingtalkOAuth2Client;
@@ -124,6 +128,8 @@ export class DingtalkContentGenerator extends OpenAIContentGenerator {
       return await attemptOperation();
     } catch (error) {
       if (this.isAuthError(error)) {
+        // Clear cached token and force refresh once
+        this.clearToken();
         await this.sharedManager.getValidCredentials(this.dingtalkClient, true);
         return await attemptOperation();
       }
@@ -135,8 +141,9 @@ export class DingtalkContentGenerator extends OpenAIContentGenerator {
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
+    const patchedRequest = this.applyDingtalkDefaults(request);
     return this.executeWithCredentialManagement(() =>
-      super.generateContent(request, userPromptId),
+      super.generateContent(patchedRequest, userPromptId),
     );
   }
 
@@ -144,8 +151,9 @@ export class DingtalkContentGenerator extends OpenAIContentGenerator {
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
+    const patchedRequest = this.applyDingtalkDefaults(request);
     return this.executeWithCredentialManagement(() =>
-      super.generateContentStream(request, userPromptId),
+      super.generateContentStream(patchedRequest, userPromptId),
     );
   }
 
@@ -174,5 +182,60 @@ export class DingtalkContentGenerator extends OpenAIContentGenerator {
   clearToken(): void {
     this.currentToken = undefined;
     this.sharedManager.clearCache();
+  }
+
+  /**
+   * Apply DingTalk model-specific defaults (only when not provided by user).
+   * - Default stream=true (backend forces stream, keep client in sync)
+   * - For doubao-seed-1.6, set reasoning_effort=high
+   */
+  private applyDingtalkDefaults(
+    request: GenerateContentParameters,
+  ): GenerateContentParameters {
+    const cloned = { ...request } as Record<string, unknown>;
+    const originalConfig = cloned['config'];
+    const clonedConfig =
+      originalConfig &&
+      typeof originalConfig === 'object' &&
+      !Array.isArray(originalConfig)
+        ? { ...(originalConfig as Record<string, unknown>) }
+        : {};
+
+    const syncParam = (key: string, defaultValue?: unknown) => {
+      const topVal = cloned[key];
+      const cfgVal = clonedConfig[key];
+      const finalVal =
+        topVal !== undefined
+          ? topVal
+          : cfgVal !== undefined
+            ? cfgVal
+            : defaultValue;
+
+      if (finalVal !== undefined) {
+        cloned[key] = finalVal;
+        clonedConfig[key] = finalVal;
+      }
+    };
+
+    // Stream default to true for DingTalk proxy if unset
+    syncParam(STREAM_KEY, true);
+
+    const modelName = String(cloned['model'] || '');
+    const isDoubaoSeedMain =
+      typeof modelName === 'string' && modelName.startsWith(DOUDAO_SEED_PREFIX);
+
+    if (isDoubaoSeedMain) {
+      syncParam(REASONING_EFFORT_KEY, 'high');
+    } else {
+      // Keep any user-specified values in sync between top-level and config
+      syncParam(REASONING_EFFORT_KEY);
+    }
+
+    // thinking_type: sync user-provided values only (no default)
+    syncParam(THINKING_TYPE_KEY);
+
+    cloned['config'] = clonedConfig;
+
+    return cloned as unknown as GenerateContentParameters;
   }
 }

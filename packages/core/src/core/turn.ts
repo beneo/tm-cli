@@ -59,10 +59,15 @@ export enum GeminiEventType {
   LoopDetected = 'loop_detected',
   Citation = 'citation',
   Retry = 'retry',
+  Reasoning = 'reasoning',
 }
 
 export type ServerGeminiRetryEvent = {
   type: GeminiEventType.Retry;
+  attempt: number;
+  totalAttempts: number;
+  reason?: string;
+  delayMs?: number;
 };
 
 export interface StructuredError {
@@ -117,6 +122,11 @@ export type ServerGeminiContentEvent = {
 export type ServerGeminiThoughtEvent = {
   type: GeminiEventType.Thought;
   value: ThoughtSummary;
+};
+
+export type ServerGeminiReasoningEvent = {
+  type: GeminiEventType.Reasoning;
+  value: string;
 };
 
 export type ServerGeminiToolCallRequestEvent = {
@@ -198,6 +208,7 @@ export type ServerGeminiCitationEvent = {
 export type ServerGeminiStreamEvent =
   | ServerGeminiChatCompressedEvent
   | ServerGeminiCitationEvent
+  | ServerGeminiReasoningEvent
   | ServerGeminiContentEvent
   | ServerGeminiErrorEvent
   | ServerGeminiFinishedEvent
@@ -251,7 +262,13 @@ export class Turn {
 
         // Handle the new RETRY event
         if (streamEvent.type === 'retry') {
-          yield { type: GeminiEventType.Retry };
+          yield {
+            type: GeminiEventType.Retry,
+            attempt: streamEvent.attempt,
+            totalAttempts: streamEvent.totalAttempts,
+            reason: streamEvent.reason,
+            delayMs: streamEvent.delayMs,
+          };
           continue; // Skip to the next event in the stream
         }
 
@@ -264,6 +281,13 @@ export class Turn {
         // Track the current response ID for tool call correlation
         if (resp.responseId) {
           this.currentResponseId = resp.responseId;
+        }
+
+        const reasoning = (resp as unknown as Record<string, unknown>)[
+          'reasoningContent'
+        ];
+        if (typeof reasoning === 'string' && reasoning.length > 0) {
+          yield { type: GeminiEventType.Reasoning, value: reasoning };
         }
 
         const thoughtPart = resp.candidates?.[0]?.content?.parts?.[0];

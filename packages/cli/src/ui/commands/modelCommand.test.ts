@@ -23,9 +23,11 @@ vi.mock('../models/availableModels.js', () => ({
 // Helper function to create a mock config
 function createMockConfig(
   contentGeneratorConfig: ContentGeneratorConfig | null,
+  overrides: Partial<Config> = {},
 ): Partial<Config> {
   return {
     getContentGeneratorConfig: vi.fn().mockReturnValue(contentGeneratorConfig),
+    ...overrides,
   };
 }
 
@@ -140,6 +142,35 @@ describe('modelCommand', () => {
       messageType: 'error',
       content:
         'No models available for the current authentication type (openai).',
+    });
+  });
+
+  it('should use cached DingTalk models when available', async () => {
+    const dynamicModels = ['dingtalk-model-1', 'dingtalk-model-2'];
+    mockGetAvailableModelsForAuthType.mockReturnValue(
+      dynamicModels.map((id) => ({ id, label: id })),
+    );
+
+    const mockConfig = createMockConfig(
+      {
+        model: 'test-model',
+        authType: AuthType.DINGTALK_OAUTH,
+      },
+      {
+        getAvailableModelsForAuth: vi.fn().mockReturnValue(dynamicModels),
+      },
+    );
+    mockContext.services.config = mockConfig as Config;
+
+    const result = await modelCommand.action!(mockContext, '');
+
+    expect(mockGetAvailableModelsForAuthType).toHaveBeenCalledWith(
+      AuthType.DINGTALK_OAUTH,
+      { dynamicModels },
+    );
+    expect(result).toEqual({
+      type: 'dialog',
+      dialog: 'model',
     });
   });
 

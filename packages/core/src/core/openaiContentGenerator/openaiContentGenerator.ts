@@ -33,6 +33,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
         cliConfig,
         contentGeneratorConfig.enableOpenAILogging,
         contentGeneratorConfig.openAILoggingDir,
+        cliConfig.storage,
       ),
       errorHandler: new EnhancedErrorHandler(
         (error: unknown, request: GenerateContentParameters) =>

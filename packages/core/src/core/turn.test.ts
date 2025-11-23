@@ -738,7 +738,13 @@ describe('Turn', () => {
 
     it('should yield a Retry event when it receives one from the chat stream', async () => {
       const mockResponseStream = (async function* () {
-        yield { type: StreamEventType.RETRY };
+        yield {
+          type: StreamEventType.RETRY,
+          attempt: 1,
+          totalAttempts: 5,
+          reason: 'API_500',
+          delayMs: 5000,
+        };
         yield {
           type: StreamEventType.CHUNK,
           value: {
@@ -758,7 +764,13 @@ describe('Turn', () => {
       }
 
       expect(events).toEqual([
-        { type: GeminiEventType.Retry },
+        {
+          type: GeminiEventType.Retry,
+          attempt: 1,
+          totalAttempts: 5,
+          reason: 'API_500',
+          delayMs: 5000,
+        },
         { type: GeminiEventType.Content, value: 'Success' },
       ]);
     });

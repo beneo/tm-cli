@@ -24,6 +24,7 @@ import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
 import { AuthType } from './contentGenerator.js';
 import { type RetryOptions } from '../utils/retry.js';
 import { uiTelemetryService } from '../telemetry/uiTelemetry.js';
+import type { ContentRetryEvent } from '../telemetry/types.js';
 
 // Mock fs module to prevent actual file system operations during tests
 const mockFileSystem = new Map<string, string>();
@@ -786,10 +787,18 @@ describe('GeminiChat', () => {
       }
 
       // ASSERT: Check that a RETRY event was present in the stream's output.
-      const retryEvent = events.find((e) => e.type === StreamEventType.RETRY);
+      const retryEvent = events.find(
+        (e) => e.type === StreamEventType.RETRY,
+      ) as Extract<StreamEvent, { type: StreamEventType.RETRY }> | undefined;
 
       expect(retryEvent).toBeDefined();
-      expect(retryEvent?.type).toBe(StreamEventType.RETRY);
+      expect(retryEvent).toMatchObject({
+        type: StreamEventType.RETRY,
+        attempt: 1,
+      });
+      expect(retryEvent?.totalAttempts).toBeGreaterThan(1);
+      expect(retryEvent?.reason).toBeDefined();
+      expect(typeof retryEvent?.delayMs).toBe('number');
     });
     it('should retry on invalid content, succeed, and report metrics', async () => {
       // Use mockImplementationOnce to provide a fresh, promise-wrapped generator for each attempt.
@@ -904,6 +913,97 @@ describe('GeminiChat', () => {
         role: 'user',
         parts: [{ text: 'test' }],
       });
+    });
+
+    it('should retry when the stream throws a retryable ApiError mid-flight', async () => {
+      const serverError = new ApiError({
+        message: 'Upstream 500',
+        status: 500,
+      });
+
+      const failingStream = (async function* () {
+        yield; // Required for generator function
+        throw serverError;
+      })();
+
+      const successStream = (async function* () {
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: 'Recovered after server error' }] },
+              finishReason: 'STOP',
+            },
+          ],
+        } as unknown as GenerateContentResponse;
+      })();
+
+      vi.mocked(mockContentGenerator.generateContentStream)
+        .mockResolvedValueOnce(failingStream)
+        .mockResolvedValueOnce(successStream);
+
+      const stream = await chat.sendMessageStream(
+        'test-model',
+        { message: 'test' },
+        'prompt-id-stream-api-error',
+      );
+
+      const events: StreamEvent[] = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      expect(mockContentGenerator.generateContentStream).toHaveBeenCalledTimes(
+        2,
+      );
+      const retryEvents = mockLogContentRetry.mock.calls.map(
+        ([, event]) => event as ContentRetryEvent,
+      );
+      expect(retryEvents.some((event) => event.error_type === 'API_500')).toBe(
+        true,
+      );
+      expect(events.some((e) => e.type === StreamEventType.RETRY)).toBe(true);
+      expect(
+        events.some(
+          (e) =>
+            e.type === StreamEventType.CHUNK &&
+            e.value.candidates?.[0]?.content?.parts?.[0]?.text ===
+              'Recovered after server error',
+        ),
+      ).toBe(true);
+    });
+
+    it('should not retry when an AbortError is thrown from the stream', async () => {
+      const abortError = Object.assign(new Error('Request aborted'), {
+        name: 'AbortError',
+      });
+
+      const abortingStream = (async function* () {
+        yield; // Required for generator function
+        throw abortError;
+      })();
+
+      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
+        abortingStream,
+      );
+
+      const stream = await chat.sendMessageStream(
+        'test-model',
+        { message: 'test' },
+        'prompt-id-abort-error',
+      );
+
+      await expect(
+        (async () => {
+          for await (const _ of stream) {
+            /* consume stream */
+          }
+        })(),
+      ).rejects.toThrow(abortError);
+
+      expect(mockContentGenerator.generateContentStream).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(mockLogContentRetry).not.toHaveBeenCalled();
     });
 
     describe('API error retry behavior', () => {

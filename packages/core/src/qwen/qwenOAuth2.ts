@@ -696,7 +696,11 @@ async function authWithQwenDeviceFlow(
             'Authentication successful! Access token obtained.',
           );
 
-          console.debug('Authentication successful! Access token obtained.');
+          console.log('✓ Authentication successful! Access token obtained.');
+          console.log(
+            '📁 API logs location: ~/.qwen/tmp/<project-hash>/api-logs/',
+          );
+          console.log('   (View logs: ls -lt ~/.qwen/tmp/*/api-logs/)');
           return { success: true };
         }
 

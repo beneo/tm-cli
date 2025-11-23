@@ -28,6 +28,19 @@ export interface RetryOptions {
     error?: unknown,
   ) => Promise<string | boolean | null>;
   authType?: string;
+  /**
+   * Optional callback invoked before each retry attempt.
+   * @param attempt The current attempt number (1-indexed)
+   * @param error The error that triggered the retry
+   * @param delayMs The delay in milliseconds before the next attempt
+   * @param maxAttempts The maximum number of attempts configured
+   */
+  onRetry?: (
+    attempt: number,
+    error: unknown,
+    delayMs: number,
+    maxAttempts: number,
+  ) => void;
 }
 
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
@@ -236,6 +249,12 @@ export async function retryWithBackoff<T>(
           `Attempt ${attempt} failed with status ${delayErrorStatus ?? 'unknown'}. Retrying after explicit delay of ${delayDurationMs}ms...`,
           error,
         );
+
+        // Call onRetry callback if provided
+        if (options?.onRetry) {
+          options.onRetry(attempt, error, delayDurationMs, maxAttempts);
+        }
+
         await delay(delayDurationMs);
         // Reset currentDelay for next potential non-429 error, or if Retry-After is not present next time
         currentDelay = initialDelayMs;
@@ -245,6 +264,12 @@ export async function retryWithBackoff<T>(
         // Add jitter: +/- 30% of currentDelay
         const jitter = currentDelay * 0.3 * (Math.random() * 2 - 1);
         const delayWithJitter = Math.max(0, currentDelay + jitter);
+
+        // Call onRetry callback if provided
+        if (options?.onRetry) {
+          options.onRetry(attempt, error, delayWithJitter, maxAttempts);
+        }
+
         await delay(delayWithJitter);
         currentDelay = Math.min(maxDelayMs, currentDelay * 2);
       }
@@ -349,31 +374,43 @@ function logRetryAttempt(
   error: unknown,
   errorStatus?: number,
 ): void {
+  // Extract error message for better user visibility
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : 'Unknown error';
+
   let message = `Attempt ${attempt} failed. Retrying with backoff...`;
   if (errorStatus) {
     message = `Attempt ${attempt} failed with status ${errorStatus}. Retrying with backoff...`;
   }
 
   if (errorStatus === 429) {
-    console.warn(message, error);
+    console.warn(message);
+    console.warn(`Error: ${errorMessage}`);
   } else if (errorStatus && errorStatus >= 500 && errorStatus < 600) {
-    console.error(message, error);
+    console.error(message);
+    console.error(`Error: ${errorMessage}`);
   } else if (error instanceof Error) {
     // Fallback for errors that might not have a status but have a message
     if (error.message.includes('429')) {
       console.warn(
         `Attempt ${attempt} failed with 429 error (no Retry-After header). Retrying with backoff...`,
-        error,
       );
+      console.warn(`Error: ${errorMessage}`);
     } else if (error.message.match(/5\d{2}/)) {
       console.error(
         `Attempt ${attempt} failed with 5xx error. Retrying with backoff...`,
-        error,
       );
+      console.error(`Error: ${errorMessage}`);
     } else {
-      console.warn(message, error); // Default to warn for other errors
+      console.warn(message);
+      console.warn(`Error: ${errorMessage}`);
     }
   } else {
-    console.warn(message, error); // Default to warn if error type is unknown
+    console.warn(message);
+    console.warn(`Error: ${errorMessage}`);
   }
 }

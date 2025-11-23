@@ -825,6 +825,7 @@ export default {
   'files to customize your interactions with Qwen Code.':
     '文件以自定义您与 Qwen Code 的交互',
   'for more information.': '获取更多信息',
+  'API logs:': 'API 日志：',
 
   // ============================================================================
   // Exit Screen / Stats

@@ -103,6 +103,11 @@ export type HistoryItemGeminiContent = HistoryItemBase & {
   text: string;
 };
 
+export type HistoryItemReasoning = HistoryItemBase & {
+  type: 'reasoning';
+  text: string;
+};
+
 export type HistoryItemInfo = HistoryItemBase & {
   type: 'info';
   text: string;
@@ -246,6 +251,7 @@ export type HistoryItemWithoutId =
   | HistoryItemUserShell
   | HistoryItemGemini
   | HistoryItemGeminiContent
+  | HistoryItemReasoning
   | HistoryItemInfo
   | HistoryItemError
   | HistoryItemWarning
@@ -280,6 +286,7 @@ export enum MessageType {
   QUIT = 'quit',
   QUIT_CONFIRMATION = 'quit_confirmation',
   GEMINI = 'gemini',
+  REASONING = 'reasoning',
   COMPRESSION = 'compression',
   SUMMARY = 'summary',
   EXTENSIONS_LIST = 'extensions_list',

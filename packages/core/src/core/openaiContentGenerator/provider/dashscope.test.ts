@@ -892,5 +892,44 @@ describe('DashScopeOpenAICompatibleProvider', () => {
       expect(result.max_tokens).toBe(65536); // Should be limited
       expect(result.stream).toBe(true); // Streaming should be preserved
     });
+
+    it('should remove stream_options when stream is false', () => {
+      const request: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'qwen-max',
+        messages: [{ role: 'user', content: 'Hello!' }],
+        stream: false,
+        stream_options: { include_usage: true },
+      };
+
+      const result = provider.buildRequest(request, 'test-prompt-id');
+
+      expect(result).not.toHaveProperty('stream_options');
+    });
+
+    it('should keep stream_options when stream is true', () => {
+      const request: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'qwen-max',
+        messages: [{ role: 'user', content: 'Hello!' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      };
+
+      const result = provider.buildRequest(request, 'test-prompt-id');
+
+      expect(result).toHaveProperty('stream_options');
+      expect(result.stream_options).toEqual({ include_usage: true });
+    });
+
+    it('should handle requests without stream_options', () => {
+      const request: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'qwen-max',
+        messages: [{ role: 'user', content: 'Hello!' }],
+        stream: false,
+      };
+
+      const result = provider.buildRequest(request, 'test-prompt-id');
+
+      expect(result).not.toHaveProperty('stream_options');
+    });
   });
 });

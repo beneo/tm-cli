@@ -50,7 +50,13 @@ export enum StreamEventType {
 
 export type StreamEvent =
   | { type: StreamEventType.CHUNK; value: GenerateContentResponse }
-  | { type: StreamEventType.RETRY };
+  | {
+      type: StreamEventType.RETRY;
+      attempt: number;
+      totalAttempts: number;
+      reason?: string;
+      delayMs?: number;
+    };
 
 /**
  * Options for retrying due to invalid content from the model.
@@ -63,8 +69,8 @@ interface ContentRetryOptions {
 }
 
 const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
-  maxAttempts: 2, // 1 initial call + 1 retry
-  initialDelayMs: 500,
+  maxAttempts: 6, // 1 initial call + 5 retries (total 6 attempts)
+  initialDelayMs: 5000, // Start with 5 seconds delay
 };
 /**
  * Returns true if the response is valid, false otherwise.
@@ -189,6 +195,29 @@ export class InvalidStreamError extends Error {
   }
 }
 
+interface StreamRetryDecision {
+  retryable: boolean;
+  reason?: string;
+  delayMs?: number;
+}
+
+interface StreamRetryEventPayload {
+  attempt: number;
+  totalAttempts: number;
+  reason?: string;
+  delayMs?: number;
+}
+
+const NETWORK_ERROR_CODES = [
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+];
+
 /**
  * Chat session that enables sending messages to the model with previous
  * conversation context.
@@ -243,6 +272,15 @@ export class GeminiChat {
     params: SendMessageParameters,
     prompt_id: string,
   ): Promise<AsyncGenerator<StreamEvent>> {
+    const debugEnabled =
+      typeof this.config.getDebugMode === 'function'
+        ? this.config.getDebugMode()
+        : false;
+
+    if (debugEnabled) {
+      console.log('🔴🔴🔴 [SEND MESSAGE STREAM CALLED] 🔴🔴🔴');
+      console.log(`Model: ${model}, Prompt ID: ${prompt_id}`);
+    }
     await this.sendPromise;
 
     let streamDoneResolver: () => void;
@@ -274,8 +312,22 @@ export class GeminiChat {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
     return (async function* () {
+      if (debugEnabled) {
+        console.log('=================================');
+        console.log('[GENERATOR START] New retry logic is active!');
+        console.log(
+          `[CONFIG] Max attempts: ${INVALID_CONTENT_RETRY_OPTIONS.maxAttempts}`,
+        );
+        console.log(
+          `[CONFIG] Initial delay: ${INVALID_CONTENT_RETRY_OPTIONS.initialDelayMs}ms`,
+        );
+        console.log('=================================');
+      }
       try {
         let lastError: unknown = new Error('Request failed after all retries.');
+        const totalAttempts = INVALID_CONTENT_RETRY_OPTIONS.maxAttempts;
+        const totalRetries = Math.max(totalAttempts - 1, 0);
+        let pendingRetryEvent: StreamRetryEventPayload | null = null;
 
         for (
           let attempt = 0;
@@ -283,8 +335,29 @@ export class GeminiChat {
           attempt++
         ) {
           try {
+            if (pendingRetryEvent) {
+              yield {
+                type: StreamEventType.RETRY,
+                attempt: pendingRetryEvent.attempt,
+                totalAttempts: pendingRetryEvent.totalAttempts,
+                reason: pendingRetryEvent.reason,
+                delayMs: pendingRetryEvent.delayMs,
+              };
+              pendingRetryEvent = null;
+            }
+
             if (attempt > 0) {
-              yield { type: StreamEventType.RETRY };
+              if (debugEnabled) {
+                console.log(
+                  `[Attempt ${attempt + 1}/${INVALID_CONTENT_RETRY_OPTIONS.maxAttempts}] Starting retry...`,
+                );
+              }
+            } else {
+              if (debugEnabled) {
+                console.log(
+                  `[Attempt 1/${INVALID_CONTENT_RETRY_OPTIONS.maxAttempts}] Initial API call...`,
+                );
+              }
             }
 
             const stream = await self.makeApiCallAndProcessStream(
@@ -299,44 +372,116 @@ export class GeminiChat {
             }
 
             lastError = null;
+            if (debugEnabled) {
+              console.log(`[Success] API call completed successfully.`);
+            }
             break;
           } catch (error) {
             lastError = error;
-            const isContentError = error instanceof InvalidStreamError;
+            console.error('=================================');
+            console.error(
+              `[ATTEMPT ${attempt + 1}/${INVALID_CONTENT_RETRY_OPTIONS.maxAttempts} FAILED]`,
+            );
+            console.error('=================================');
+            console.error(
+              `[Error Message] ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
 
-            if (isContentError) {
+            if (debugEnabled) {
+              console.error(
+                `[Error Type Check] error instanceof InvalidStreamError: ${
+                  error instanceof InvalidStreamError
+                }`,
+              );
+              console.error(
+                `[Error Type Check] error?.constructor?.name: ${error?.constructor?.name}`,
+              );
+              console.error(
+                `[Error Type Check] error?.name: ${
+                  error instanceof Error ? error.name : 'N/A'
+                }`,
+              );
+
+              if (error instanceof InvalidStreamError) {
+                console.error(
+                  `[InvalidStreamError Type] ${(error as InvalidStreamError).type}`,
+                );
+              }
+
+              console.error(
+                '[Full Error Object]:',
+                JSON.stringify(
+                  {
+                    type: typeof error,
+                    constructor: error?.constructor?.name,
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                    isInvalidStreamError: error instanceof InvalidStreamError,
+                    name: error instanceof Error ? error.name : 'not an Error',
+                    keys: error ? Object.keys(error) : [],
+                  },
+                  null,
+                  2,
+                ),
+              );
+            }
+
+            const retryDecision = classifyStreamErrorForRetry(error);
+            if (retryDecision.retryable) {
               // Check if we have more attempts left.
               if (attempt < INVALID_CONTENT_RETRY_OPTIONS.maxAttempts - 1) {
+                const delayMs =
+                  retryDecision.delayMs ??
+                  INVALID_CONTENT_RETRY_OPTIONS.initialDelayMs * (attempt + 1);
+                const delaySec = (delayMs / 1000).toFixed(1);
+                const retryReason =
+                  retryDecision.reason ??
+                  (error instanceof Error ? error.name : 'unknown_error');
+                const retryMessage =
+                  error instanceof InvalidStreamError
+                    ? `Model returned invalid content (${error.type}).`
+                    : `Retryable error detected (${retryReason}).`;
+                const retryCount = Math.min(attempt + 1, totalRetries);
+                console.warn(
+                  `[Retry ${retryCount}/${totalRetries}] ${retryMessage} Retrying in ${delaySec}s (${delayMs}ms)...`,
+                );
                 logContentRetry(
                   self.config,
-                  new ContentRetryEvent(
-                    attempt,
-                    (error as InvalidStreamError).type,
-                    INVALID_CONTENT_RETRY_OPTIONS.initialDelayMs,
-                    model,
-                  ),
+                  new ContentRetryEvent(attempt, retryReason, delayMs, model),
                 );
-                await new Promise((res) =>
-                  setTimeout(
-                    res,
-                    INVALID_CONTENT_RETRY_OPTIONS.initialDelayMs *
-                      (attempt + 1),
-                  ),
-                );
+                pendingRetryEvent = {
+                  attempt: retryCount,
+                  totalAttempts,
+                  reason: retryReason,
+                  delayMs,
+                };
+                await new Promise((res) => setTimeout(res, delayMs));
                 continue;
+              } else {
+                console.error(
+                  `[All retries exhausted] Failed after ${INVALID_CONTENT_RETRY_OPTIONS.maxAttempts} attempts.`,
+                );
+                pendingRetryEvent = null;
               }
+            } else {
+              console.error(
+                `[Non-retryable error] Error is not retryable or user cancelled, stopping retries.`,
+              );
             }
             break;
           }
         }
 
         if (lastError) {
-          if (lastError instanceof InvalidStreamError) {
+          const failureDecision = classifyStreamErrorForRetry(lastError);
+          if (failureDecision.reason) {
             logContentRetryFailure(
               self.config,
               new ContentRetryFailureEvent(
                 INVALID_CONTENT_RETRY_OPTIONS.maxAttempts,
-                (lastError as InvalidStreamError).type,
+                failureDecision.reason,
                 model,
               ),
             );
@@ -581,6 +726,29 @@ export class GeminiChat {
     // - No finish reason, OR
     // - Empty response text (e.g., only thoughts with no actual content)
     if (!hasToolCall && (!hasFinishReason || !responseText)) {
+      const debugEnabled =
+        typeof this.config.getDebugMode === 'function'
+          ? this.config.getDebugMode()
+          : false;
+
+      if (debugEnabled) {
+        console.error('[Stream Error Debug]', {
+          hasToolCall,
+          hasFinishReason,
+          responseText,
+          consolidatedPartsCount: consolidatedParts.length,
+          modelResponsePartsCount: modelResponseParts.length,
+          consolidatedParts: JSON.stringify(consolidatedParts, null, 2),
+          modelResponseParts: JSON.stringify(modelResponseParts, null, 2),
+        });
+      } else {
+        console.error('[Stream Error]', {
+          hasToolCall,
+          hasFinishReason,
+          responseText: responseText ? 'present' : 'missing',
+        });
+      }
+
       if (!hasFinishReason) {
         throw new InvalidStreamError(
           'Model stream ended without a finish reason.',
@@ -637,4 +805,79 @@ export function isSchemaDepthError(errorMessage: string): boolean {
 
 export function isInvalidArgumentError(errorMessage: string): boolean {
   return errorMessage.includes('Request contains an invalid argument');
+}
+
+function classifyStreamErrorForRetry(error: unknown): StreamRetryDecision {
+  if (error instanceof InvalidStreamError) {
+    return { retryable: true, reason: error.type };
+  }
+
+  if (error instanceof ApiError) {
+    if (
+      error.status === 400 &&
+      error.message &&
+      isSchemaDepthError(error.message)
+    ) {
+      return { retryable: false };
+    }
+    if (error.status === 429) {
+      return { retryable: true, reason: 'API_429' };
+    }
+    if (typeof error.status === 'number' && error.status >= 500) {
+      return { retryable: true, reason: `API_${error.status}` };
+    }
+  }
+
+  if (isAbortError(error)) {
+    return { retryable: false };
+  }
+
+  if (isNetworkError(error)) {
+    return { retryable: true, reason: 'NETWORK_ERROR' };
+  }
+
+  return { retryable: false };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function isNetworkError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  const code =
+    typeof (error as { code?: unknown }).code === 'string'
+      ? ((error as { code?: unknown }).code as string)
+      : undefined;
+  if (code) {
+    const upperCode = code.toUpperCase();
+    if (
+      NETWORK_ERROR_CODES.some((networkCode) => upperCode.includes(networkCode))
+    ) {
+      return true;
+    }
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof (error as { message?: unknown }).message === 'string'
+        ? ((error as { message?: unknown }).message as string)
+        : undefined;
+
+  if (message) {
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes('network error') ||
+      normalized.includes('fetch failed') ||
+      normalized.includes('socket hang up')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }

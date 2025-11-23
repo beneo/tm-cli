@@ -12,6 +12,7 @@ import type {
   ServerGeminiChatCompressedEvent,
   ServerGeminiContentEvent as ContentEvent,
   ServerGeminiFinishedEvent,
+  ServerGeminiRetryEvent,
   ServerGeminiStreamEvent as GeminiEvent,
   ThoughtSummary,
   ToolCallRequestInfo,
@@ -80,6 +81,26 @@ function showCitations(settings: LoadedSettings): boolean {
     return enabled;
   }
   return true;
+}
+
+function formatRetryReason(reason?: string): string {
+  if (!reason) {
+    return 'transient issue';
+  }
+  if (reason.startsWith('API_')) {
+    const code = reason.slice(4);
+    return code === '429' ? 'rate limit (429)' : `server error (${code})`;
+  }
+  if (reason === 'NETWORK_ERROR') {
+    return 'network instability';
+  }
+  if (reason === 'NO_FINISH_REASON') {
+    return 'missing finish signal';
+  }
+  if (reason === 'NO_RESPONSE_TEXT') {
+    return 'empty response';
+  }
+  return reason.replace(/_/g, ' ').toLowerCase();
 }
 
 /**
@@ -493,6 +514,56 @@ export const useGeminiStream = (
     [addItem, pendingHistoryItemRef, setPendingHistoryItem],
   );
 
+  const handleReasoningEvent = useCallback(
+    (value: string, userMessageTimestamp: number) => {
+      if (turnCancelledRef.current) {
+        return;
+      }
+      const currentText = (
+        pendingHistoryItemRef.current?.type === 'reasoning'
+          ? pendingHistoryItemRef.current.text
+          : ''
+      ) as string;
+      const nextText = currentText + value;
+
+      if (
+        pendingHistoryItemRef.current &&
+        pendingHistoryItemRef.current.type !== 'reasoning'
+      ) {
+        addItem(pendingHistoryItemRef.current, userMessageTimestamp);
+      }
+
+      setPendingHistoryItem({ type: 'reasoning', text: nextText });
+    },
+    [addItem, pendingHistoryItemRef, setPendingHistoryItem],
+  );
+
+  const handleRetryEvent = useCallback(
+    (eventValue: ServerGeminiRetryEvent, userMessageTimestamp: number) => {
+      if (turnCancelledRef.current) {
+        return;
+      }
+
+      const totalRetries = Math.max(eventValue.totalAttempts - 1, 1);
+      const retryOrdinal = Math.min(eventValue.attempt, totalRetries);
+      const details: string[] = [`Retry ${retryOrdinal}/${totalRetries}`];
+      if (eventValue.reason) {
+        details.push(`reason: ${formatRetryReason(eventValue.reason)}`);
+      }
+      if (typeof eventValue.delayMs === 'number') {
+        details.push(`next in ${(eventValue.delayMs / 1000).toFixed(1)}s`);
+      }
+      addItem(
+        {
+          type: MessageType.INFO,
+          text: `🔁 ${details.join(' · ')}`,
+        },
+        userMessageTimestamp,
+      );
+    },
+    [addItem],
+  );
+
   const handleUserCancelledEvent = useCallback(
     (userMessageTimestamp: number) => {
       if (turnCancelledRef.current) {
@@ -719,6 +790,9 @@ export const useGeminiStream = (
               userMessageTimestamp,
             );
             break;
+          case ServerGeminiEventType.Reasoning:
+            handleReasoningEvent(event.value, userMessageTimestamp);
+            break;
           case ServerGeminiEventType.ToolCallRequest:
             toolCallRequests.push(event.value);
             break;
@@ -756,7 +830,7 @@ export const useGeminiStream = (
             loopDetectedRef.current = true;
             break;
           case ServerGeminiEventType.Retry:
-            // Will add the missing logic later
+            handleRetryEvent(event, userMessageTimestamp);
             break;
           default: {
             // enforces exhaustive switch-case
@@ -772,11 +846,13 @@ export const useGeminiStream = (
     },
     [
       handleContentEvent,
+      handleReasoningEvent,
       handleUserCancelledEvent,
       handleErrorEvent,
       scheduleToolCalls,
       handleChatCompressionEvent,
       handleFinishedEvent,
+      handleRetryEvent,
       handleMaxSessionTurnsEvent,
       handleSessionTokenLimitExceededEvent,
       handleCitationEvent,

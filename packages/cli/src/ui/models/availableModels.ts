@@ -62,10 +62,24 @@ export function getOpenAIAvailableModelFromEnv(): AvailableModel | null {
 
 export function getAvailableModelsForAuthType(
   authType: AuthType,
+  options?: { dynamicModels?: string[] },
 ): AvailableModel[] {
+  const dynamic = options?.dynamicModels ?? [];
+  const mapDynamic = (models: string[]) =>
+    models.map((id) => ({
+      id,
+      label: id,
+    }));
+
   switch (authType) {
     case AuthType.QWEN_OAUTH:
       return AVAILABLE_MODELS_QWEN;
+    case AuthType.DINGTALK_OAUTH: {
+      if (dynamic.length > 0) {
+        return mapDynamic(dynamic);
+      }
+      return [];
+    }
     case AuthType.USE_OPENAI: {
       const openAIModel = getOpenAIAvailableModelFromEnv();
       return openAIModel ? [openAIModel] : [];

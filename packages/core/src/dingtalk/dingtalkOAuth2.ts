@@ -18,6 +18,7 @@ import {
   TokenManagerError,
   TokenError,
 } from './sharedTokenManager.js';
+import { clearDingtalkCachedCredentials } from './dingtalkModels.js';
 
 const DINGTALK_OAUTH_BASE_URL = 'http://localhost:8080';
 const DINGTALK_OAUTH_DEVICE_CODE_ENDPOINT = `${DINGTALK_OAUTH_BASE_URL}/api/v1/oauth2/device/code`;
@@ -356,6 +357,7 @@ export async function getDingtalkOAuthClient(
       if (!result.success) {
         const errorMessage =
           result.message || 'Dingtalk OAuth authentication failed';
+        clearDingtalkCachedCredentials();
         throw new Error(errorMessage);
       }
       sharedManager.clearCache();
@@ -477,6 +479,7 @@ async function authWithDingtalkDeviceFlow(
           'error',
           message,
         );
+        clearDingtalkCachedCredentials();
         return { success: false, reason: 'cancelled', message };
       }
 
@@ -537,6 +540,9 @@ async function authWithDingtalkDeviceFlow(
           'error',
           message,
         );
+        if (tokenResponse.error === 'access_denied') {
+          clearDingtalkCachedCredentials();
+        }
         if (tokenResponse.error === 'slow_down') {
           await new Promise((resolve) =>
             setTimeout(resolve, pollInterval + 2000),

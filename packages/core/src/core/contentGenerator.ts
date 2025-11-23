@@ -225,12 +225,44 @@ export async function createContentGenerator(
     const { DingtalkContentGenerator } = await import(
       '../dingtalk/dingtalkContentGenerator.js'
     );
+    const { fetchDingtalkModels } = await import(
+      '../dingtalk/dingtalkModels.js'
+    );
 
     try {
       const dingtalkClient = await getDingtalkOAuthClient(
         gcConfig,
         isInitialAuth ? { requireCachedCredentials: true } : undefined,
       );
+      // Attempt to refresh dynamic models before returning the generator.
+      const modelResult = await fetchDingtalkModels(dingtalkClient);
+      if (modelResult.success) {
+        gcConfig.setAvailableModelsForAuth(
+          AuthType.DINGTALK_OAUTH,
+          modelResult.models,
+        );
+        gcConfig.setModelFetchError(AuthType.DINGTALK_OAUTH, undefined);
+        // If current model is unset or still the default placeholder, pick the first available.
+        if (
+          !config.model ||
+          config.model === DEFAULT_QWEN_MODEL ||
+          config.model === 'coder-model'
+        ) {
+          config.model = modelResult.models[0];
+        }
+      } else {
+        gcConfig.setModelFetchError(AuthType.DINGTALK_OAUTH, modelResult.error);
+        if (!config.model || config.model === DEFAULT_QWEN_MODEL) {
+          throw new Error(
+            `Failed to fetch DingTalk models: ${modelResult.error?.message || 'unknown error'}`,
+          );
+        } else {
+          console.warn(
+            `Using configured model "${config.model}" despite fetch error: ${modelResult.error?.message}`,
+          );
+        }
+      }
+
       return new DingtalkContentGenerator(dingtalkClient, config, gcConfig);
     } catch (error) {
       throw new Error(

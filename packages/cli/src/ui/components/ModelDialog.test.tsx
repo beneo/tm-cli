@@ -4,13 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ModelDialog } from './ModelDialog.js';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { DescriptiveRadioButtonSelect } from './shared/DescriptiveRadioButtonSelect.js';
 import { ConfigContext } from '../contexts/ConfigContext.js';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config ,
+  fetchDingtalkModels,
+  getDingtalkOAuthClient,
+  AuthType,
+  type ModelFetchError,
+  type IDingtalkOAuth2Client,
+} from '@qwen-code/qwen-code-core';
 import {
   AVAILABLE_MODELS_QWEN,
   MAINLINE_CODER,
@@ -26,6 +32,16 @@ vi.mock('./shared/DescriptiveRadioButtonSelect.js', () => ({
   DescriptiveRadioButtonSelect: vi.fn(() => null),
 }));
 const mockedSelect = vi.mocked(DescriptiveRadioButtonSelect);
+
+// Mock DingTalk functions - must use vi.fn() directly in factory
+vi.mock('@qwen-code/qwen-code-core', async () => {
+  const actual = await vi.importActual('@qwen-code/qwen-code-core');
+  return {
+    ...actual,
+    fetchDingtalkModels: vi.fn(),
+    getDingtalkOAuthClient: vi.fn(),
+  };
+});
 
 const renderComponent = (
   props: Partial<React.ComponentProps<typeof ModelDialog>> = {},
@@ -223,5 +239,191 @@ describe('<ModelDialog />', () => {
     // Should be called at least twice: initial render + re-render after context change
     expect(mockedSelect).toHaveBeenCalledTimes(2);
     expect(mockedSelect.mock.calls[1][0].initialIndex).toBe(1);
+  });
+});
+
+describe('<ModelDialog /> - DingTalk dynamic models', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Mock OAuth client
+    vi.mocked(getDingtalkOAuthClient).mockResolvedValue({
+      getAccessToken: vi.fn().mockResolvedValue({ token: 'valid-token' }),
+      getCredentials: vi.fn().mockReturnValue({
+        access_token: 'valid-token',
+        resource_url: 'http://localhost:8080/v1',
+      }),
+    } as Partial<IDingtalkOAuth2Client> as IDingtalkOAuth2Client);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('should display fetched models for dingtalk-oauth auth type', async () => {
+    const mockFetchedModels = ['dingtalk-model-1', 'dingtalk-model-2'];
+    vi.mocked(fetchDingtalkModels).mockResolvedValue({
+      success: true,
+      models: mockFetchedModels,
+    });
+
+    const mockSetAvailableModelsForAuth = vi.fn();
+    const mockSetModelFetchError = vi.fn();
+
+    renderComponent(
+      {},
+      {
+        getAuthType: vi.fn(() => AuthType.DINGTALK_OAUTH),
+        getAvailableModelsForAuth: vi.fn(() => mockFetchedModels),
+        setAvailableModelsForAuth: mockSetAvailableModelsForAuth,
+        setModelFetchError: mockSetModelFetchError,
+        getModelFetchError: vi.fn(() => undefined),
+      },
+    );
+
+    // Wait for models to load
+    await waitFor(() => {
+      expect(mockSetAvailableModelsForAuth).toHaveBeenCalledWith(
+        'dingtalk-oauth',
+        mockFetchedModels,
+      );
+      expect(mockSetModelFetchError).toHaveBeenCalledWith(
+        'dingtalk-oauth',
+        undefined,
+      );
+    });
+
+    // Verify models are passed to select component
+    await waitFor(() => {
+      expect(mockedSelect).toHaveBeenCalled();
+      const props =
+        mockedSelect.mock.calls[mockedSelect.mock.calls.length - 1][0];
+      const modelValues = props.items.map(
+        (item: { value: string }) => item.value,
+      );
+      expect(modelValues).toEqual(mockFetchedModels);
+    });
+  });
+
+  it('should show loading state during fetch', async () => {
+    // Mock a delayed response
+    let resolvePromise: (value: { success: boolean; models: string[] }) => void;
+    const promise = new Promise<{ success: boolean; models: string[] }>(
+      (resolve) => {
+        resolvePromise = resolve;
+      },
+    );
+    vi.mocked(fetchDingtalkModels).mockReturnValue(promise);
+
+    const { getByText } = renderComponent(
+      {},
+      {
+        getAuthType: vi.fn(() => AuthType.DINGTALK_OAUTH),
+        getAvailableModelsForAuth: vi.fn(() => []),
+        setAvailableModelsForAuth: vi.fn(),
+        setModelFetchError: vi.fn(),
+        getModelFetchError: vi.fn(() => undefined),
+      },
+    );
+
+    // Should show loading state
+    await waitFor(() => {
+      expect(getByText('Refreshing model list...')).toBeDefined();
+    });
+
+    // Resolve the promise
+    resolvePromise!({ success: true, models: ['test-model'] });
+
+    // Wait for loading to finish
+    await waitFor(() => {
+      expect(() => getByText('Refreshing model list...')).toThrow();
+    });
+  });
+
+  it('should show error state when fetch fails', async () => {
+    const errorMessage = 'Network connection failed';
+    vi.mocked(fetchDingtalkModels).mockResolvedValue({
+      success: false,
+      models: [],
+      error: {
+        code: 'NETWORK_ERROR',
+        message: errorMessage,
+      },
+    });
+
+    const mockSetModelFetchError = vi.fn();
+
+    const { getByText } = renderComponent(
+      {},
+      {
+        getAuthType: vi.fn(() => AuthType.DINGTALK_OAUTH),
+        getAvailableModelsForAuth: vi.fn(() => []),
+        setAvailableModelsForAuth: vi.fn(),
+        setModelFetchError: mockSetModelFetchError,
+        getModelFetchError: vi.fn(() => undefined),
+      },
+    );
+
+    // Wait for error to be displayed
+    await waitFor(() => {
+      expect(mockSetModelFetchError).toHaveBeenCalledWith(
+        'dingtalk-oauth',
+        expect.objectContaining({
+          code: 'NETWORK_ERROR',
+          message: errorMessage,
+        }),
+      );
+    });
+
+    // Verify error message is shown
+    await waitFor(() => {
+      const errorText = getByText(
+        `Failed to refresh model list: ${errorMessage}`,
+      );
+      expect(errorText).toBeDefined();
+    });
+  });
+
+  it('should prioritize fetchError over modelFetchError', async () => {
+    const fetchErrorMessage = 'Latest fetch error';
+    const cachedErrorMessage = 'Cached error from startup';
+
+    vi.mocked(fetchDingtalkModels).mockResolvedValue({
+      success: false,
+      models: [],
+      error: {
+        code: 'NETWORK_ERROR',
+        message: fetchErrorMessage,
+      },
+    });
+
+    const { getAllByText, queryByText } = renderComponent(
+      {},
+      {
+        getAuthType: vi.fn(() => AuthType.DINGTALK_OAUTH),
+        getAvailableModelsForAuth: vi.fn(() => []),
+        setAvailableModelsForAuth: vi.fn(),
+        setModelFetchError: vi.fn(),
+        getModelFetchError: vi.fn(
+          (): ModelFetchError => ({
+            code: 'AUTH_ERROR',
+            message: cachedErrorMessage,
+          }),
+        ),
+      },
+    );
+
+    // Should display the latest fetchError (not the cached modelFetchError)
+    await waitFor(() => {
+      const errorTexts = getAllByText(
+        `Failed to refresh model list: ${fetchErrorMessage}`,
+      );
+      expect(errorTexts.length).toBeGreaterThan(0);
+    });
+
+    // Should not display the cached error message
+    expect(
+      queryByText(`Failed to refresh model list: ${cachedErrorMessage}`),
+    ).toBeNull();
   });
 });

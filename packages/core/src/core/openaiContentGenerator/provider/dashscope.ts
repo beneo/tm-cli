@@ -80,6 +80,7 @@ export class DashScopeOpenAICompatibleProvider
    * - Output token limits based on model capabilities
    * - Vision model specific parameters (vl_high_resolution_images)
    * - Request metadata for session tracking
+   * - Removes stream_options when stream is false (DashScope requirement)
    *
    * @param request - The original chat completion request parameters
    * @param userPromptId - Unique identifier for the user prompt for session tracking
@@ -110,8 +111,10 @@ export class DashScopeOpenAICompatibleProvider
       request.model,
     );
 
+    let finalRequest: OpenAI.Chat.ChatCompletionCreateParams;
+
     if (this.isVisionModel(request.model)) {
-      return {
+      finalRequest = {
         ...requestWithTokenLimits,
         messages,
         ...(tools ? { tools } : {}),
@@ -119,14 +122,24 @@ export class DashScopeOpenAICompatibleProvider
         /* @ts-expect-error dashscope exclusive */
         vl_high_resolution_images: true,
       } as OpenAI.Chat.ChatCompletionCreateParams;
+    } else {
+      finalRequest = {
+        ...requestWithTokenLimits, // Preserve all original parameters including sampling params and adjusted max_tokens
+        messages,
+        ...(tools ? { tools } : {}),
+        ...(this.buildMetadata(userPromptId) || {}),
+      } as OpenAI.Chat.ChatCompletionCreateParams;
     }
 
-    return {
-      ...requestWithTokenLimits, // Preserve all original parameters including sampling params and adjusted max_tokens
-      messages,
-      ...(tools ? { tools } : {}),
-      ...(this.buildMetadata(userPromptId) || {}),
-    } as OpenAI.Chat.ChatCompletionCreateParams;
+    // DashScope does not support stream_options when stream is false
+    // Remove it to prevent API errors
+    if (!finalRequest.stream) {
+      delete (
+        finalRequest as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
+      ).stream_options;
+    }
+
+    return finalRequest;
   }
 
   buildMetadata(userPromptId: string): DashScopeRequestMetadata {
