@@ -921,12 +921,12 @@ describe('GeminiChat', () => {
         status: 500,
       });
 
-      const failingStream = (async function* () {
-        yield; // Required for generator function
+      const failingStream = (async function* (): AsyncGenerator<GenerateContentResponse, void, unknown> {
+        yield {} as GenerateContentResponse; // Dummy yield to satisfy generator type
         throw serverError;
       })();
 
-      const successStream = (async function* () {
+      const successStream = (async function* (): AsyncGenerator<GenerateContentResponse, void, unknown> {
         yield {
           candidates: [
             {
@@ -977,8 +977,8 @@ describe('GeminiChat', () => {
         name: 'AbortError',
       });
 
-      const abortingStream = (async function* () {
-        yield; // Required for generator function
+      const abortingStream = (async function* (): AsyncGenerator<GenerateContentResponse, void, unknown> {
+        yield {} as GenerateContentResponse; // Dummy yield to satisfy generator type
         throw abortError;
       })();
 

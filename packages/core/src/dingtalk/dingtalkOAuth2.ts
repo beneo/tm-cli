@@ -20,7 +20,7 @@ import {
 } from './sharedTokenManager.js';
 import { clearDingtalkCachedCredentials } from './dingtalkModels.js';
 
-const DINGTALK_OAUTH_BASE_URL = 'http://localhost:8080';
+const DINGTALK_OAUTH_BASE_URL = 'https://tmcli.buguk12.com';
 const DINGTALK_OAUTH_DEVICE_CODE_ENDPOINT = `${DINGTALK_OAUTH_BASE_URL}/api/v1/oauth2/device/code`;
 const DINGTALK_OAUTH_TOKEN_ENDPOINT = `${DINGTALK_OAUTH_BASE_URL}/api/v1/oauth2/token`;
 

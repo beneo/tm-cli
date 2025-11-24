@@ -101,7 +101,7 @@ export function createContentGeneratorConfig(
   }
 
   if (authType === AuthType.DINGTALK_OAUTH) {
-    const DEFAULT_DINGTALK_BASE_URL = 'http://localhost:8080/v1';
+    const DEFAULT_DINGTALK_BASE_URL = 'https://tmcli.buguk12.com/v1';
     return {
       ...newContentGeneratorConfig,
       model: DEFAULT_QWEN_MODEL,

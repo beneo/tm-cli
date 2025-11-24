@@ -19,7 +19,7 @@ import { SharedTokenManager } from './sharedTokenManager.js';
 import type { Config } from '../config/config.js';
 import type { ContentGeneratorConfig } from '../core/contentGenerator.js';
 
-const DEFAULT_DINGTALK_BASE_URL = 'http://localhost:8080/v1';
+const DEFAULT_DINGTALK_BASE_URL = 'https://tmcli.buguk12.com/v1';
 const STREAM_KEY = 'stream';
 const REASONING_EFFORT_KEY = 'reasoning_effort';
 const THINKING_TYPE_KEY = 'thinking_type';

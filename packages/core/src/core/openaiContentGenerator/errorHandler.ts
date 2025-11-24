@@ -32,6 +32,23 @@ export class EnhancedErrorHandler implements ErrorHandler {
     context: RequestContext,
     request: GenerateContentParameters,
   ): never {
+    // Import InvalidStreamError check - preserve it without wrapping
+    // This ensures retry logic can properly detect and retry these errors
+    if (
+      error instanceof Error &&
+      (error.name === 'InvalidStreamError' ||
+        error.constructor.name === 'InvalidStreamError')
+    ) {
+      // Log but don't wrap - preserve original error for retry detection
+      if (!this.shouldSuppressErrorLogging(error, request)) {
+        const logPrefix = context.isStreaming
+          ? 'OpenAI API Streaming Error:'
+          : 'OpenAI API Error:';
+        console.error(logPrefix, error.message);
+      }
+      throw error;
+    }
+
     const isTimeoutError = this.isTimeoutError(error);
     const errorMessage = this.buildErrorMessage(error, context, isTimeoutError);
 

@@ -606,6 +606,16 @@ export class ContentGenerationPipeline {
       return { retryable: true, reason: type };
     }
 
+    // Check for empty choices error message (in case InvalidStreamError is wrapped/lost)
+    if (error instanceof Error && error.message.includes('missing or empty choices array')) {
+      if (this.debugMode) {
+        console.warn(
+          '[FALLBACK] Detected empty choices error message, treating as retryable (NO_RESPONSE_TEXT)',
+        );
+      }
+      return { retryable: true, reason: 'NO_RESPONSE_TEXT' };
+    }
+
     const status =
       typeof (error as { status?: unknown }).status === 'number'
         ? ((error as { status: number }).status as number)

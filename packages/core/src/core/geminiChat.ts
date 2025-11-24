@@ -812,6 +812,11 @@ function classifyStreamErrorForRetry(error: unknown): StreamRetryDecision {
     return { retryable: true, reason: error.type };
   }
 
+  // Check for empty choices error message (in case InvalidStreamError is wrapped/lost)
+  if (error instanceof Error && error.message.includes('missing or empty choices array')) {
+    return { retryable: true, reason: 'NO_RESPONSE_TEXT' };
+  }
+
   if (error instanceof ApiError) {
     if (
       error.status === 400 &&

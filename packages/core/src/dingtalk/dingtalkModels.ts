@@ -56,7 +56,7 @@ export function clearDingtalkCachedCredentials(): void {
 
 function normalizeBaseUrl(resourceUrl?: string): string {
   if (!resourceUrl) {
-    return 'http://localhost:8080';
+    return 'https://tmcli.buguk12.com';
   }
 
   // Strip trailing /v1 to get the API root

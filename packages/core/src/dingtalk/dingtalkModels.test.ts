@@ -11,10 +11,14 @@ import {
 } from './dingtalkModels.js';
 import type { IDingtalkOAuth2Client } from './dingtalkOAuth2.js';
 
-const mockClient: Partial<IDingtalkOAuth2Client> = {
+const mockClient = {
   getCredentials: vi.fn(),
   getAccessToken: vi.fn(),
-};
+  setCredentials: vi.fn(),
+  requestDeviceAuthorization: vi.fn(),
+  pollDeviceToken: vi.fn(),
+  refreshAccessToken: vi.fn(),
+} as any as IDingtalkOAuth2Client;
 
 describe('fetchDingtalkModels', () => {
   const originalFetch = global.fetch;
@@ -22,8 +26,8 @@ describe('fetchDingtalkModels', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.getAccessToken.mockResolvedValue({ token: 'valid-token' });
-    mockClient.getCredentials.mockReturnValue({
+    (mockClient.getAccessToken as any).mockResolvedValue({ token: 'valid-token' });
+    (mockClient.getCredentials as any).mockReturnValue({
       resource_url: endpointBase,
     });
   });

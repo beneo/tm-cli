@@ -153,7 +153,7 @@ Usage notes:
 Example usage:
 <example_agent_descriptions>
 "code-reviewer": use this agent after you are done writing a signficant piece of code
-"greeting-responder": use this agent when to respond to user greetings with a friendly joke
+"general-purpose": use this agent for researching complex questions and multi-step tasks
 </example_agent_description>
 
 <example>
@@ -174,15 +174,15 @@ function isPrime(n) {
 Since a signficant piece of code was written and the task was completed, now use the code-reviewer agent to review the code
 </commentary>
 assistant: Now let me use the code-reviewer agent to review the code
-assistant: Uses the Task tool to launch the with the code-reviewer agent 
+assistant: Uses the Task tool to launch the code-reviewer agent
 </example>
 
 <example>
-user: "Hello"
+user: "Find all the authentication methods used in this codebase"
 <commentary>
-Since the user is greeting, use the greeting-responder agent to respond with a friendly joke
+This requires researching the codebase, so use the general-purpose agent
 </commentary>
-assistant: "I'm going to use the Task tool to launch the with the greeting-responder agent"
+assistant: "I'm going to use the Task tool to launch the general-purpose agent to research authentication methods"
 </example>
 `;
 

@@ -18,6 +18,9 @@
   "scripts": {
     "start": "cross-env node scripts/start.js",
     "debug": "cross-env DEBUG=1 node --inspect-brk scripts/start.js",
+    "dev:install": "sh scripts/install_qwen_cli_robust.sh",
+    "publish:aliyun": "sh scripts/publish_to_aliyun.sh",
+    "package:oss": "sh scripts/package_for_oss.sh",
     "auth:npm": "npx google-artifactregistry-auth",
     "auth:docker": "gcloud auth configure-docker us-west1-docker.pkg.dev",
     "auth": "npm run auth:npm && npm run auth:docker",
@@ -111,7 +114,8 @@
   },
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
-    "simple-git": "^3.28.0"
+    "simple-git": "^3.28.0",
+    "tiktoken": "^1.0.21"
   },
   "optionalDependencies": {
     "@lydell/node-pty": "1.1.0",

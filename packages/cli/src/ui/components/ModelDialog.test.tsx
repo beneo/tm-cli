@@ -10,12 +10,14 @@ import { ModelDialog } from './ModelDialog.js';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { DescriptiveRadioButtonSelect } from './shared/DescriptiveRadioButtonSelect.js';
 import { ConfigContext } from '../contexts/ConfigContext.js';
-import type { Config ,
+import type {
+  Config,
+  ModelFetchError,
+} from '@qwen-code/qwen-code-core';
+import {
   fetchDingtalkModels,
   getDingtalkOAuthClient,
   AuthType,
-  type ModelFetchError,
-  type IDingtalkOAuth2Client,
 } from '@qwen-code/qwen-code-core';
 import {
   AVAILABLE_MODELS_QWEN,
@@ -253,7 +255,13 @@ describe('<ModelDialog /> - DingTalk dynamic models', () => {
         access_token: 'valid-token',
         resource_url: 'http://localhost:8080/v1',
       }),
-    } as Partial<IDingtalkOAuth2Client> as IDingtalkOAuth2Client);
+      setCredentials: vi.fn(),
+      requestDeviceAuthorization: vi.fn(),
+      pollDeviceToken: vi.fn(),
+      refreshAccessToken: vi.fn(),
+      credentials: {},
+      sharedManager: {} as any,
+    } as any);
   });
 
   afterEach(() => {
@@ -299,7 +307,7 @@ describe('<ModelDialog /> - DingTalk dynamic models', () => {
       const props =
         mockedSelect.mock.calls[mockedSelect.mock.calls.length - 1][0];
       const modelValues = props.items.map(
-        (item: { value: string }) => item.value,
+        (item: any) => item.value,
       );
       expect(modelValues).toEqual(mockFetchedModels);
     });

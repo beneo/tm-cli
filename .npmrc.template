@@ -1,0 +1,14 @@
+# Qwen CLI - npm 配置模板
+#
+# 这个文件配置了阿里云效私有仓库的访问
+# 用户只需设置 registry，不需要登录即可安装
+
+# 设置阿里云效为默认仓库
+registry=https://packages.aliyun.com/5f5840b4df9df74e36b00684/npm/npm-registry/
+
+# 如果需要发布权限，取消注释以下行并填入 token
+# 获取 token 的方法：登录后运行 npm config get //${registry}/:_authToken
+# //packages.aliyun.com/5f5840b4df9df74e36b00684/npm/npm-registry/:_authToken=YOUR_TOKEN_HERE
+
+# 总是使用认证（即使是只读操作）
+always-auth=false
